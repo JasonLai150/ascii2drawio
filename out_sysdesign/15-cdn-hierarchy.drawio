@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="ascii2drawio" version="1.0">
+  <diagram name="ASCII Diagram" id="d1">
+    <mxGraphModel dx="800" dy="600" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="n0" value="User A" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="108" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="n1" value="PoP Edge 1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="252" y="0" width="144" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="n2" value="Regional 1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="558" y="0" width="144" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="n3" value="User B" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="0" y="108" width="108" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="n4" value="PoP Edge 2" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="252" y="108" width="144" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="n5" value="Origin Shield" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="558" y="126" width="144" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="n6" value="Regional 2" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="252" y="216" width="144" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="n7" value="Origin S3" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="558" y="288" width="144" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="n8" value="Invalidator" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="558" y="378" width="144" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="req qer" style="endArrow=classic;startArrow=none;html=1;rounded=0;" edge="1" source="n0" target="n1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="" style="endArrow=classic;startArrow=none;html=1;rounded=0;" edge="1" source="n5" target="n2" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="req qer" style="endArrow=classic;startArrow=none;html=1;rounded=0;" edge="1" source="n3" target="n4" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="" style="endArrow=classic;startArrow=none;html=1;rounded=0;" edge="1" source="n4" target="n6" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="" style="endArrow=classic;startArrow=none;html=1;rounded=0;" edge="1" source="n6" target="n5" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="" style="endArrow=classic;startArrow=none;html=1;rounded=0;" edge="1" source="n8" target="n7" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

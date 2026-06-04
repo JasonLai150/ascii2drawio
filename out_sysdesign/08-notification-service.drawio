@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="ascii2drawio" version="1.0">
+  <diagram name="ASCII Diagram" id="d1">
+    <mxGraphModel dx="800" dy="600" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="n0" value="Producer" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="144" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="n1" value="Notif Gateway" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="306" y="0" width="180" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="n2" value="Kafka Bus" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="648" y="0" width="144" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="n3" value="Push Worker" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="207" y="162" width="135" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="n4" value="SMS Worker" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="459" y="162" width="135" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="n5" value="Email Worker" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="711" y="162" width="135" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="n6" value="APNs/FCM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="207" y="252" width="135" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="n7" value="Twilio API" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="459" y="252" width="135" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="n8" value="SES/SMTP" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="711" y="252" width="135" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="n9" value="Audit Store" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="459" y="360" width="135" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="enqueue eueuqne" style="endArrow=classic;startArrow=none;html=1;rounded=0;" edge="1" source="n1" target="n2" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="emusnoc consume" style="endArrow=classic;startArrow=none;html=1;rounded=0;" edge="1" source="n2" target="n4" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="" style="endArrow=classic;startArrow=none;html=1;rounded=0;" edge="1" source="n3" target="n6" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="" style="endArrow=classic;startArrow=none;html=1;rounded=0;" edge="1" source="n4" target="n7" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="" style="endArrow=classic;startArrow=none;html=1;rounded=0;" edge="1" source="n5" target="n8" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="" style="endArrow=classic;startArrow=none;html=1;rounded=0;" edge="1" source="n6" target="n9" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
