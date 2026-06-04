@@ -15,6 +15,7 @@ import argparse
 import html
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -270,11 +271,11 @@ def find_edges(g: Grid, consumed, nodes: list[Node]) -> list[Edge]:
             ch = g.at(r, c)
             if ch not in LINE_CHARS and ch not in ARROWS:
                 continue
-            cells, label = _bfs_edge(g, consumed, r, c)
+            cells, label, label_pos = _bfs_edge(g, consumed, r, c)
             if not cells:
                 continue
-            edge = _build_edge(g, len(edges), cells, label, nodes)
-            if edge is None:
+            new_edges = _build_edges(g, len(edges), cells, label, label_pos, nodes)
+            if not new_edges:
                 # mark cells consumed anyway so we don't reprocess them
                 for rr, cc in cells:
                     if consumed[rr][cc] is None:
@@ -282,16 +283,75 @@ def find_edges(g: Grid, consumed, nodes: list[Node]) -> list[Edge]:
                 continue
             for rr, cc in cells:
                 if consumed[rr][cc] is None:
-                    consumed[rr][cc] = ("edge", edge.id)
-            edges.append(edge)
+                    consumed[rr][cc] = ("edge", new_edges[0].id)
+            # The off-line label post-pass walks edge.cells; give the component
+            # cells to the first split edge so it can still find floating labels.
+            new_edges[0].cells = list(cells)
+            edges.extend(new_edges)
+    # Post-pass: edges with no inline label may have a floating label sitting
+    # beside / above / below the line (the request/response case). Grab it.
+    for edge in edges:
+        if edge.label:
+            continue
+        edge.label = _offline_label(g, consumed, edge)
     return edges
+
+
+def _offline_label(g: Grid, consumed, edge: Edge) -> str:
+    """Find text adjacent (perpendicular) to an edge's line cells.
+
+    Only words whose column span overlaps the edge's own column span are kept,
+    to avoid grabbing unrelated text elsewhere on the row.
+    """
+    if not edge.cells:
+        return ""
+    edge_cols = {c for _, c in edge.cells}
+    cmin, cmax = min(edge_cols), max(edge_cols)
+    words: list[tuple[int, int, str]] = []
+    seen_starts: set[tuple[int, int]] = set()
+
+    def is_text(r: int, c: int) -> bool:
+        if not g.in_bounds(r, c) or consumed[r][c] is not None:
+            return False
+        ch = g.at(r, c)
+        return ch != " " and ch not in LINE_CHARS and ch not in ARROWS
+
+    for r, c in edge.cells:
+        conns = connects(g.at(r, c))
+        perp = []
+        if "L" in conns or "R" in conns:      # horizontal run → look above/below
+            perp += [(r - 1, c), (r + 1, c)]
+        if "U" in conns or "D" in conns:      # vertical run → look left/right
+            perp += [(r, c - 1), (r, c + 1)]
+        for pr, pc in perp:
+            if not is_text(pr, pc):
+                continue
+            cs = pc
+            while is_text(pr, cs - 1):
+                cs -= 1
+            ce = pc
+            while is_text(pr, ce + 1):
+                ce += 1
+            if (pr, cs) in seen_starts:
+                continue
+            if ce < cmin or cs > cmax:        # word's span doesn't overlap edge
+                continue
+            seen_starts.add((pr, cs))
+            word = "".join(g.at(pr, x) for x in range(cs, ce + 1)).strip()
+            if word:
+                words.append((pr, cs, word))
+                for x in range(cs, ce + 1):
+                    consumed[pr][x] = ("edge-label", edge.id)
+
+    words.sort()
+    return " ".join(w for _, _, w in words)
 
 
 def _bfs_edge(g: Grid, consumed, r0: int, c0: int):
     """Walk connected line/arrow glyphs; bridge label gaps along the same axis."""
     visited: set[tuple[int, int]] = set()
     cells: list[tuple[int, int]] = []
-    label_runs: list[str] = []
+    label_runs: list[tuple[str, list[tuple[int, int]]]] = []
     stack = [(r0, c0)]
     while stack:
         r, c = stack.pop()
@@ -321,17 +381,34 @@ def _bfs_edge(g: Grid, consumed, r0: int, c0: int):
             # gap-bridging across labels along same axis
             bridged = _look_ahead_bridge(g, consumed, r, c, d)
             if bridged is not None:
-                text, end_cell = bridged
+                text, end_cell, text_cells = bridged
                 if text:
-                    label_runs.append(text)
+                    label_runs.append((text, text_cells))
                 stack.append(end_cell)
-    return cells, " ".join(label_runs)
+    # A gap is bridged from both endpoints, yielding the same label twice;
+    # collapse duplicates while preserving first-seen order.
+    seen: set[str] = set()
+    kept = [(t, tc) for t, tc in label_runs if not (t in seen or seen.add(t))]
+    label = " ".join(t for t, _ in kept)
+    label_cells = [cell for _, tc in kept for cell in tc]
+    if label_cells:
+        lr = sum(r for r, _ in label_cells) / len(label_cells)
+        lc = sum(c for _, c in label_cells) / len(label_cells)
+        label_pos = (lr, lc)
+    else:
+        label_pos = None
+    return cells, label, label_pos
 
 
 def _look_ahead_bridge(g: Grid, consumed, r: int, c: int, d: str):
-    """If a label interrupts a line, look ahead for a connecting glyph."""
+    """If a label interrupts a line, look ahead for a connecting glyph.
+
+    Returns (text, end_cell, text_cells) where text_cells are the grid
+    positions of the non-blank label characters (for later placement).
+    """
     dr, dc = DIRS[d]
     text_chars: list[str] = []
+    text_cells: list[tuple[int, int]] = []
     nr, nc = r + dr, c + dc
     steps = 0
     while g.in_bounds(nr, nc) and steps < LABEL_LOOKAHEAD:
@@ -340,57 +417,121 @@ def _look_ahead_bridge(g: Grid, consumed, r: int, c: int, d: str):
         ch = g.at(nr, nc)
         if ch in LINE_CHARS or ch in ARROWS:
             if OPP[d] in connects(ch) and any(t.strip() for t in text_chars):
-                return ("".join(text_chars).strip(), (nr, nc))
+                # When walking left/up the chars are collected in reverse
+                # reading order; flip them so the label reads correctly.
+                ordered = text_chars if d in ("R", "D") else list(reversed(text_chars))
+                return ("".join(ordered).strip(), (nr, nc), text_cells)
             return None
         text_chars.append(ch)
+        if ch != " ":
+            text_cells.append((nr, nc))
         nr += dr
         nc += dc
         steps += 1
     return None
 
 
-def _build_edge(g: Grid, eid: int, cells, label: str, nodes: list[Node]) -> Optional[Edge]:
-    endpoints = []  # (node_id, is_arrow_into_this_node)
+def _node_at(nodes: list[Node], r: int, c: int) -> Optional[Node]:
+    for n in nodes:
+        if n.top <= r <= n.bottom and n.left <= c <= n.right:
+            return n
+    return None
+
+
+def _node_center(n: Node) -> tuple[float, float]:
+    return ((n.top + n.bottom) / 2, (n.left + n.right) / 2)
+
+
+def _dist(a: tuple[float, float], b: tuple[float, float]) -> float:
+    return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
+
+
+def _build_edges(
+    g: Grid,
+    eid_start: int,
+    cells,
+    label: str,
+    label_pos: Optional[tuple[float, float]],
+    nodes: list[Node],
+) -> list[Edge]:
+    """Split one connected line component into the edges it actually encodes.
+
+    A component can fan out (one source → many arrowheads) or fan in (many
+    sources → one arrowhead). We collect every node touchpoint, mark it as a
+    sink (an arrowhead points into the node) or a source (a plain line leaves
+    it), then pair them up rather than collapsing to a single edge.
+    """
+    touch: dict[int, bool] = {}  # node_id -> arrow points into it
     for r, c in cells:
         ch = g.at(r, c)
         ad = arrow_dir(ch)
         for d in connects(ch):
             dr, dc = DIRS[d]
-            nr, nc = r + dr, c + dc
-            for n in nodes:
-                if n.top <= nr <= n.bottom and n.left <= nc <= n.right:
-                    endpoints.append((n.id, ad == d))
-        if ad is not None:
-            dr, dc = DIRS[ad]
-            nr, nc = r + dr, c + dc
-            for n in nodes:
-                if n.top <= nr <= n.bottom and n.left <= nc <= n.right:
-                    endpoints.append((n.id, True))
-    if not endpoints:
-        return None
-    # collapse duplicates while preserving order
-    distinct = []
-    for nid, is_arrow in endpoints:
-        existing = next((d for d in distinct if d[0] == nid), None)
-        if existing is None:
-            distinct.append([nid, is_arrow])
-        elif is_arrow:
-            existing[1] = True
-    if len(distinct) < 2:
-        return None
-    (a_id, a_arr), (b_id, b_arr) = distinct[0], distinct[1]
-    edge = Edge(id=eid, label=label, cells=list(cells))
-    if b_arr and not a_arr:
-        edge.src, edge.dst = a_id, b_id
-        edge.has_arrow_dst = True
-    elif a_arr and not b_arr:
-        edge.src, edge.dst = b_id, a_id
-        edge.has_arrow_dst = True
-    else:
-        edge.src, edge.dst = a_id, b_id
-        edge.has_arrow_dst = a_arr or b_arr
-        edge.has_arrow_src = a_arr and b_arr
-    return edge
+            n = _node_at(nodes, r + dr, c + dc)
+            if n is None:
+                continue
+            touch[n.id] = touch.get(n.id, False) or (ad == d)
+    if len(touch) < 2:
+        return []
+
+    sinks = [nid for nid, arr in touch.items() if arr]
+    sources = [nid for nid, arr in touch.items() if not arr]
+    center = {nid: _node_center(_node_by_id(nodes, nid)) for nid in touch}
+
+    # triples: (src, dst, arrow_dst, arrow_src)
+    triples: list[tuple[int, int, bool, bool]] = []
+    if sources and sinks:
+        if len(sources) == 1:                       # fan-out: one src → each sink
+            s = sources[0]
+            triples = [(s, t, True, False) for t in sinks]
+        elif len(sinks) == 1:                       # fan-in: each src → one sink
+            t = sinks[0]
+            triples = [(s, t, True, False) for s in sources]
+        else:                                       # M×N: pair on proximity
+            used = set()
+            for t in sinks:
+                s = min(sources, key=lambda s: _dist(center[s], center[t]))
+                triples.append((s, t, True, False))
+                used.add(s)
+            for s in sources:
+                if s not in used:
+                    t = min(sinks, key=lambda t: _dist(center[s], center[t]))
+                    triples.append((s, t, True, False))
+    elif sinks:                                     # arrowheads only → bidirectional
+        h = sinks[0]
+        triples = [(h, t, True, True) for t in sinks[1:]]
+    else:                                           # no arrows → undirected
+        h = sources[0]
+        triples = [(h, t, False, False) for t in sources[1:]]
+
+    # "Nearest branch only": the shared trunk label goes on the single edge
+    # whose corridor (midpoint of its two node centers) is closest to the label.
+    label_idx: Optional[int] = None
+    if label:
+        if label_pos is not None and triples:
+            def corridor_dist(tp):
+                a, b = center[tp[0]], center[tp[1]]
+                mid = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+                return _dist(mid, label_pos)
+            label_idx = min(range(len(triples)), key=lambda i: corridor_dist(triples[i]))
+        elif triples:
+            label_idx = 0
+
+    edges: list[Edge] = []
+    for i, (s, t, arr_dst, arr_src) in enumerate(triples):
+        edges.append(Edge(
+            id=eid_start + i,
+            src=s,
+            dst=t,
+            has_arrow_dst=arr_dst,
+            has_arrow_src=arr_src,
+            label=label if i == label_idx else "",
+        ))
+    return edges
+
+
+def _node_by_id(nodes: list[Node], nid: int) -> Node:
+    return next(n for n in nodes if n.id == nid)
 
 
 # ---------- drawio XML emit ----------
@@ -606,6 +747,34 @@ def _call_gemini(user_prompt: str, api_key: str) -> dict[str, Any]:
     return json.loads(text)
 
 
+def _border_evidence(g: Grid, top: int, left: int, bottom: int, right: int) -> float:
+    """Fraction of the claimed rectangle's border cells that are line glyphs."""
+    border = [(top, c) for c in range(left, right + 1)]
+    border += [(bottom, c) for c in range(left, right + 1)]
+    border += [(r, left) for r in range(top + 1, bottom)]
+    border += [(r, right) for r in range(top + 1, bottom)]
+    if not border:
+        return 0.0
+    hits = sum(1 for r, c in border if g.at(r, c) in LINE_CHARS or g.at(r, c) in ARROWS)
+    return hits / len(border)
+
+
+def _label_evidence(g: Grid, top: int, left: int, bottom: int, right: int, label: str) -> bool:
+    """True if the label's substantive word tokens actually appear in the region.
+
+    Guards against the LLM inventing a node whose text is nowhere in the ASCII.
+    """
+    tokens = [t for t in re.findall(r"[A-Za-z0-9]+", label) if len(t) >= 3]
+    if not tokens:
+        return True  # nothing substantive to verify
+    region = " ".join(
+        "".join(g.at(r, c) for c in range(left, right + 1))
+        for r in range(top, bottom + 1)
+    )
+    found = sum(1 for t in tokens if t in region)
+    return found * 2 >= len(tokens)  # majority of tokens grounded in the grid
+
+
 def _validate_repair(rep: Any, known_ids: set[int], g: Grid) -> bool:
     if not isinstance(rep, dict):
         return False
@@ -617,6 +786,13 @@ def _validate_repair(rep: Any, known_ids: set[int], g: Grid) -> bool:
         if rep["top"] >= rep["bottom"] or rep["left"] >= rep["right"]:
             return False
         if rep["top"] < 0 or rep["left"] < 0 or rep["bottom"] >= g.h or rep["right"] >= g.w:
+            return False
+        # Hallucination guard: a real-but-missed box has border glyphs in the
+        # grid, and its label text actually appears there. Invented boxes don't.
+        if _border_evidence(g, rep["top"], rep["left"], rep["bottom"], rep["right"]) < 0.5:
+            return False
+        if not _label_evidence(g, rep["top"], rep["left"], rep["bottom"], rep["right"],
+                               str(rep.get("label", ""))):
             return False
         return True
     if t == "edge":
