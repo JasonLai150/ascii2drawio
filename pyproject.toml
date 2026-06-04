@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ascii2drawio"
+version = "1.0.0"
+description = "Convert ASCII/Unicode box-drawing diagrams into draw.io XML"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+ascii2drawio = "ascii2drawio.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

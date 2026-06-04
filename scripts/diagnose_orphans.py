@@ -9,7 +9,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import ascii2drawio as a2d  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent

@@ -4,3 +4,7 @@ __pycache__/
 out/
 out_sysdesign/
 .DS_Store
+*.egg-info/
+.pytest_cache/
+web/node_modules/
+web/dist/

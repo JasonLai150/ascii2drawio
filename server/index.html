@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ascii2drawio</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; margin: 0; height: 100vh; display: flex; flex-direction: column; }
+    header { padding: 10px 16px; border-bottom: 1px solid #ddd; display: flex; gap: 12px; align-items: center; }
+    header h1 { font-size: 16px; margin: 0; }
+    header .grow { flex: 1; }
+    main { flex: 1; display: flex; min-height: 0; }
+    textarea { flex: 1; border: 0; border-right: 1px solid #ddd; padding: 12px;
+               font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px;
+               resize: none; outline: none; tab-size: 2; }
+    #out { flex: 1; padding: 12px; overflow: auto; }
+    pre { background: #f6f6f6; padding: 10px; border-radius: 6px; white-space: pre-wrap;
+          word-break: break-all; font-size: 11px; max-height: 70vh; overflow: auto; }
+    button { font: inherit; padding: 6px 12px; cursor: pointer; border: 1px solid #ccc;
+             border-radius: 6px; background: #fff; }
+    button.primary { background: #1565c0; color: #fff; border-color: #1565c0; }
+    #status { color: #555; font-size: 13px; }
+    #status.err { color: #c62828; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ascii2drawio</h1>
+    <span id="status">paste a diagram and convert</span>
+    <span class="grow"></span>
+    <button class="primary" id="convert">Convert</button>
+    <button id="download" disabled>Download .drawio</button>
+  </header>
+  <main>
+    <textarea id="src" spellcheck="false" placeholder="┌────────┐    ┌────────┐&#10;│  Alpha │───>│  Beta  │&#10;└────────┘    └────────┘"></textarea>
+    <div id="out"><pre id="xml"></pre></div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let lastXml = "";
+
+    async function convert() {
+      const text = $("src").value;
+      $("status").className = "";
+      $("status").textContent = "converting…";
+      try {
+        const res = await fetch("/api/convert", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, enhance: { repair: false, labels: false } }),
+        });
+        if (!res.ok) {
+          const e = await res.json().catch(() => ({}));
+          throw new Error(e.detail || res.statusText);
+        }
+        const data = await res.json();
+        lastXml = data.xml;
+        $("xml").textContent = data.xml;
+        const r = data.report;
+        $("status").textContent = `${r.nodes} nodes · ${r.edges} edges · ${r.orphan_clusters} orphan region(s)`;
+        $("download").disabled = !lastXml;
+      } catch (err) {
+        $("status").className = "err";
+        $("status").textContent = "error: " + err.message;
+      }
+    }
+
+    function download() {
+      const blob = new Blob([lastXml], { type: "application/xml" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "diagram.drawio";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    $("convert").addEventListener("click", convert);
+    $("download").addEventListener("click", download);
+    // convert on load if there's seeded text
+    if ($("src").value.trim()) convert();
+  </script>
+</body>
+</html>

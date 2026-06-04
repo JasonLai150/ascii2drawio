@@ -35,7 +35,7 @@ Decided early against pure-LLM extraction (slow, costly, non-reproducible) and a
 
 ## What's built today
 
-`ascii2drawio.py` (single file, ~1130 lines). Pipeline: `Grid → find_rectangles → find_edges → (optional LLM passes) → emit_drawio`.
+`src/ascii2drawio/` — an installable Python package split by concern (was a single ~1130-line file; refactored in Phase 0 of the web migration). Pipeline: `Grid → find_rectangles → find_edges → (optional LLM passes) → emit_drawio`. The public entry point is `convert(text, *, repair=False, labels=False, api_key=None) -> ConvertResult`; `import ascii2drawio as a2d` re-exports the full surface (`a2d.Grid`, `a2d.find_edges`, …). Modules: `glyphs` · `grid` · `nodes` · `edges` (incl. `_orphan_clusters`) · `emit` · `annotate` · `llm` · `convert` · `cli`.
 
 **Glyph classification**
 - `H_LINE`/`V_LINE`/`CORNERS`/`TEES`/`PLUS`/`ARROWS` glyph sets; `H_BORDER`/`V_BORDER` accept tees as border continuation.
@@ -97,51 +97,77 @@ Strict-mode parser; `H_BORDER`/`V_BORDER` tee handling; ±1 drift tolerance; per
 
 ```
 ascii2drawio/
-├── ascii2drawio.py          # single-file parser + XML emit + LLM passes
+├── src/ascii2drawio/        # the package (pip-installable)
+│   ├── __init__.py          # re-exports public API + back-compat names
+│   ├── __main__.py          # `python -m ascii2drawio`
+│   ├── glyphs.py            # glyph sets, connects/arrow_dir/is_edge_glyph
+│   ├── grid.py              # Grid
+│   ├── nodes.py             # Node, find_rectangles, _try_close_rect
+│   ├── edges.py             # Edge, find_edges, _build_edges, _offline_label, _orphan_clusters
+│   ├── emit.py              # emit_drawio (CHAR_W/CHAR_H)
+│   ├── annotate.py          # debug colorization
+│   ├── llm.py               # Gemini repair + label-review passes, validators
+│   ├── convert.py           # convert() + ConvertResult  ← shared entry point
+│   └── cli.py               # argparse main(), .env loader
+├── pyproject.toml           # package metadata + `ascii2drawio` console script
+├── tests/test_convert.py    # behavior pins (runs with plain python3 or pytest)
 ├── CLAUDE.md                # this file
 ├── README.md
 ├── .env                     # GEMINI_API_KEY=... (gitignored)
-├── examples/
-│   ├── simple.txt           # hand-written fixtures
-│   ├── labeled.txt
-│   ├── ascii.txt
-│   ├── spotify.txt
-│   └── sysdesign/           # 20 LLM-generated system-design diagrams
-│       ├── 01-url-shortener.txt … 20-saga-microservices.txt
+├── examples/                # simple/labeled/ascii/spotify + sysdesign/ (20 diagrams)
 ├── scripts/
 │   ├── audit.py             # parser on all fixtures: nodes/edges/orphans/XML validity
 │   └── diagnose_orphans.py  # explains why each unclaimed corner failed to close
 └── out/                     # generated .drawio files (gitignored)
 ```
 
+Scripts/tests put `src/` on `sys.path`, so they run without installing. For the
+CLI command and the web backend's `from ascii2drawio import convert`, install
+once: `pip install -e .`.
+
 ## Useful invocations
 
 ```sh
+# Run the CLI without installing (src on path). After `pip install -e .` you can
+# drop the prefix: `ascii2drawio …` or `python3 -m ascii2drawio …`.
+
 # Smoke test (write to out/, NOT /tmp)
-python3 ascii2drawio.py examples/simple.txt --report -o out/simple.drawio
+PYTHONPATH=src python3 -m ascii2drawio examples/simple.txt --report -o out/simple.drawio
 
 # Visual debug — colorized cell classification
-python3 ascii2drawio.py examples/sysdesign/20-saga-microservices.txt --annotate
+PYTHONPATH=src python3 -m ascii2drawio examples/sysdesign/20-saga-microservices.txt --annotate
 
 # LLM passes (needs GEMINI_API_KEY in .env)
-python3 ascii2drawio.py examples/sysdesign/16-online-auction.txt --llm --report -o out/16.drawio
-python3 ascii2drawio.py examples/sysdesign/20-saga-microservices.txt --llm-labels --report -o out/20.drawio
+PYTHONPATH=src python3 -m ascii2drawio examples/sysdesign/16-online-auction.txt --llm --report -o out/16.drawio
+PYTHONPATH=src python3 -m ascii2drawio examples/sysdesign/20-saga-microservices.txt --llm-labels --report -o out/20.drawio
+
+# Behavior tests
+python3 tests/test_convert.py
 
 # Full audit
 python3 scripts/audit.py
 ```
 
-## Next: web migration (plan agreed, not yet started)
+## Web migration (in progress)
 
-Migrate the CLI MVP to a web app. **Decisions locked:**
+Migrating the CLI MVP to a web app. **Decisions locked:**
 
-- **Parser**: Python backend, reuse `ascii2drawio.py` unchanged (LLM key must stay server-side; single source of truth).
+- **Parser**: Python backend, reuses the `ascii2drawio` package (LLM key stays server-side; single source of truth).
 - **API**: FastAPI, one `POST /api/convert` (`{text, enhance:{repair,labels}}` → `{xml, report}`).
 - **Frontend**: React + Vite SPA (monospace editor, debounced free conversion, "Enhance with AI" button for the LLM path).
 - **Preview**: embed editable `embed.diagrams.net` via postMessage (`init` → `load` xml; `autosave` flows edits back).
 - **Packaging**: one container (Vite build served by FastAPI static; Vite dev-proxies `/api`, so same-origin, no CORS).
 - **Hosting**: Cloud Run + Secret Manager for `GEMINI_API_KEY`, min-instances 0.
 
-**Phases:** 0) extract a pure `convert(text, *, llm_repair, llm_labels, api_key) -> ConvertResult` (xml + nodes/edges/orphan_clusters/report); `main()` becomes a wrapper; pin behavior with tests. 1) FastAPI skeleton + deterministic endpoint + barebones page (deployable). 2) editor + live draw.io preview + examples + download. 3) LLM behind a button with rate-limiting/input caps/timeouts. 4) Dockerfile + Cloud Run + logging.
+**Phases:**
+- ✅ **0** — `convert()` + `ConvertResult` extracted; monolith split into `src/ascii2drawio/`; `tests/test_convert.py` pins behavior.
+- ✅ **1** — `server/app.py`: `POST /api/convert` + `/healthz` + static serving + `.env` load + input cap (`MAX_INPUT_CHARS=20k`) + 503 when AI requested without a key. Barebones `server/index.html` (textarea → convert → download). Deployable.
+- ✅ **2** — React+Vite SPA in `web/`: monospace editor (debounced auto-convert), embedded editable draw.io preview (`DrawioPreview.tsx`, JSON postMessage protocol), `Load example` dropdown (served by `GET /api/examples`), Download `.drawio`. `vite build` → `web/dist/`, which FastAPI serves. *(Live embed render not yet browser-verified — protocol is standard.)*
+- ✅ **3** — "✨ Enhance with AI" button (repair + labels) with loading/error states + stale-response guard; backend gates the AI path: 503 without a key, per-IP rate limit + concurrency cap (`server/limits.py`) → 429, deterministic path stays unmetered. Button auto-disables via `/healthz` `llm` flag. `tests/test_server.py` covers it (stubbed Gemini, no live calls).
+- ⬜ **4** — Dockerfile (node build → python runtime) + Cloud Run + logging.
 
-Gotchas: LLM calls are blocking → sync handler/threadpool; cap input size; don't log diagram text; disclose to users that diagrams hit the server (and Google only when Enhance is used).
+Run, two ways:
+- **Prod-style (single origin):** `cd web && npm run build` then `.venv/bin/uvicorn server.app:app --port 8000` → `http://127.0.0.1:8000`.
+- **Dev (HMR):** `.venv/bin/uvicorn server.app:app --reload --port 8000` and, separately, `cd web && npm run dev` → `http://127.0.0.1:5173` (Vite proxies `/api` to :8000).
+
+Gotchas: LLM calls are blocking → sync handlers (threadpool); cap input size; don't log diagram text; disclose to users that diagrams hit the server (and Google only when Enhance is used).
