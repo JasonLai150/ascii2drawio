@@ -316,16 +316,25 @@ def find_edges(g: Grid, consumed, nodes: list[Node]) -> list[Edge]:
     return edges
 
 
-def _offline_label(g: Grid, consumed, edge: Edge) -> str:
-    """Find text adjacent (perpendicular) to an edge's line cells.
+# How far to reach perpendicular to a line when hunting a floating label.
+# Reaching sideways from a *vertical* line is safe — box columns are far apart
+# (median gap ~18 cols), and the common "word··│" layout puts the label up to 3
+# columns away. Reaching up/down from a *horizontal* line must stay tight (1
+# row): rows are packed, and a larger reach grabs a parallel line's inline label
+# (e.g. a fan-out branch stealing the trunk label one row above).
+_OFFLINE_SIDE_REACH = 3
+_OFFLINE_VERT_REACH = 1
 
-    Only words whose column span overlaps the edge's own column span are kept,
-    to avoid grabbing unrelated text elsewhere on the row.
+
+def _offline_label(g: Grid, consumed, edge: Edge) -> str:
+    """Find a floating label sitting beside / above / below an edge's line.
+
+    The reach is directional (see the constants above) and no column-overlap
+    guard is applied — a label beside a vertical line lies entirely off to one
+    side of that line's column, so an overlap guard would reject every one.
     """
     if not edge.cells:
         return ""
-    edge_cols = {c for _, c in edge.cells}
-    cmin, cmax = min(edge_cols), max(edge_cols)
     words: list[tuple[int, int, str]] = []
     seen_starts: set[tuple[int, int]] = set()
 
@@ -337,10 +346,12 @@ def _offline_label(g: Grid, consumed, edge: Edge) -> str:
     for r, c in edge.cells:
         conns = connects(g.at(r, c))
         perp = []
-        if "L" in conns or "R" in conns:      # horizontal run → look above/below
-            perp += [(r - 1, c), (r + 1, c)]
-        if "U" in conns or "D" in conns:      # vertical run → look left/right
-            perp += [(r, c - 1), (r, c + 1)]
+        if "U" in conns or "D" in conns:      # vertical run → look sideways, far
+            for d in range(1, _OFFLINE_SIDE_REACH + 1):
+                perp += [(r, c - d), (r, c + d)]
+        if "L" in conns or "R" in conns:      # horizontal run → look up/down, tight
+            for d in range(1, _OFFLINE_VERT_REACH + 1):
+                perp += [(r - d, c), (r + d, c)]
         for pr, pc in perp:
             if not is_text(pr, pc):
                 continue
@@ -351,8 +362,6 @@ def _offline_label(g: Grid, consumed, edge: Edge) -> str:
             while is_text(pr, ce + 1):
                 ce += 1
             if (pr, cs) in seen_starts:
-                continue
-            if ce < cmin or cs > cmax:        # word's span doesn't overlap edge
                 continue
             seen_starts.add((pr, cs))
             word = "".join(g.at(pr, x) for x in range(cs, ce + 1)).strip()
@@ -748,11 +757,12 @@ _GEMINI_URL = (
 )
 
 
-def _call_gemini(user_prompt: str, api_key: str) -> dict[str, Any]:
+def _call_gemini(user_prompt: str, api_key: str,
+                 system_prompt: str = _REPAIR_SYSTEM_PROMPT) -> dict[str, Any]:
     import urllib.request
 
     body = json.dumps({
-        "system_instruction": {"parts": [{"text": _REPAIR_SYSTEM_PROMPT}]},
+        "system_instruction": {"parts": [{"text": system_prompt}]},
         "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
         "generationConfig": {
             "responseMimeType": "application/json",
@@ -910,6 +920,135 @@ def llm_repair(
     return new_nodes, new_edges
 
 
+# ---------- LLM label-correction pass ----------
+
+_LABEL_REVIEW_SYSTEM_PROMPT = """\
+You are a diagram-parser proof-reader. A deterministic parser converted an \
+ASCII/Unicode box-drawing diagram into nodes (boxes) and edges (arrows), and \
+attached a text label to each where it could. Its label extraction is \
+imperfect: labels can be truncated (only one word of a multi-word label \
+captured), split, mis-attached to the wrong edge, or missed entirely.
+
+Your job: compare each detected label against the ASCII and return corrections. \
+A label is the short text written on or beside an arrow (e.g. "publish", \
+"on fail", "hash key"), or the text inside a box.
+
+RULES:
+- Only propose a correction when the parser's label differs from what the \
+diagram clearly shows. If a label is already correct, do not include it.
+- Every label you return MUST be text that literally appears in the diagram. \
+Never invent, expand, paraphrase, or translate. Copy the exact characters.
+- Refer to edges and nodes by the IDs given. Do not add new edges or nodes.
+- If nothing needs fixing, return {"repairs": []}.
+
+Respond with strict JSON only — no markdown fences, no commentary.
+
+SCHEMA:
+{
+  "repairs": [
+    {"type": "label", "target": "edge", "id": int, "label": "str"},
+    {"type": "label", "target": "node", "id": int, "label": "str"}
+  ]
+}
+"""
+
+
+def _full_grid_text(g: Grid) -> str:
+    return "\n".join("".join(g.at(r, c) for c in range(g.w)) for r in range(g.h))
+
+
+def _label_grounded(g: Grid, label: str) -> bool:
+    """True if the label's text actually appears in the diagram.
+
+    Mirrors the node guard: a majority of substantive (>=3 char) tokens must be
+    present; for labels with no such token, the whole string must appear. This
+    is what stops the model from inventing or paraphrasing label text.
+    """
+    grid_text = _full_grid_text(g)
+    tokens = [t for t in re.findall(r"[A-Za-z0-9]+", label) if len(t) >= 3]
+    if not tokens:
+        s = label.strip()
+        return (not s) or (s in grid_text)
+    found = sum(1 for t in tokens if t in grid_text)
+    return found * 2 >= len(tokens)
+
+
+def _validate_label_repair(rep: Any, node_ids: set[int], edge_ids: set[int], g: Grid) -> bool:
+    if not isinstance(rep, dict) or rep.get("type") != "label":
+        return False
+    if not isinstance(rep.get("id"), int) or not isinstance(rep.get("label"), str):
+        return False
+    target = rep.get("target")
+    if target == "edge" and rep["id"] not in edge_ids:
+        return False
+    if target == "node" and rep["id"] not in node_ids:
+        return False
+    if target not in ("edge", "node"):
+        return False
+    return _label_grounded(g, rep["label"])
+
+
+def _build_label_prompt(g: Grid, nodes: list[Node], edges: list[Edge]) -> str:
+    node_lines = [f"  id={n.id} label={n.label!r}" for n in nodes] or ["  (none)"]
+    edge_lines = [
+        f"  id={e.id} n{e.src}->n{e.dst} label={e.label!r}" for e in edges
+    ] or ["  (none)"]
+    return (
+        f"ASCII diagram:\n{_full_grid_text(g)}\n\n"
+        f"Detected nodes:\n" + "\n".join(node_lines) + "\n\n"
+        f"Detected edges (src->dst):\n" + "\n".join(edge_lines) + "\n\n"
+        f"Return label corrections only."
+    )
+
+
+def llm_label_review(
+    g: Grid,
+    nodes: list[Node],
+    edges: list[Edge],
+    api_key: str,
+    verbose: bool = False,
+) -> tuple[list[Node], list[Edge]]:
+    """One Gemini call to correct inaccurate/truncated labels on existing items.
+
+    Validated against the grid so corrections can only use text that is really
+    in the diagram. Applies in place to copies and returns them.
+    """
+    if not nodes and not edges:
+        return nodes, edges
+    prompt = _build_label_prompt(g, nodes, edges)
+    try:
+        result = _call_gemini(prompt, api_key, system_prompt=_LABEL_REVIEW_SYSTEM_PROMPT)
+    except Exception as exc:
+        if verbose:
+            sys.stderr.write(f"[llm] label review: API error: {exc}\n")
+        return nodes, edges
+
+    repairs = result.get("repairs", [])
+    if not isinstance(repairs, list):
+        return nodes, edges
+
+    node_by_id = {n.id: n for n in nodes}
+    edge_by_id = {e.id: e for e in edges}
+    applied: set[tuple[str, int]] = set()
+    for rep in repairs:
+        if not _validate_label_repair(rep, set(node_by_id), set(edge_by_id), g):
+            if verbose:
+                sys.stderr.write(f"[llm] label review: rejected {rep}\n")
+            continue
+        key = (rep["target"], rep["id"])
+        if key in applied:                       # one correction per item, first wins
+            continue
+        applied.add(key)
+        target = node_by_id[rep["id"]] if rep["target"] == "node" else edge_by_id[rep["id"]]
+        if verbose:
+            sys.stderr.write(
+                f"[llm] label review: {rep['target']} {rep['id']} "
+                f"{target.label!r} -> {rep['label']!r}\n"
+            )
+        target.label = rep["label"]
+    return nodes, edges
+
+
 # ---------- .env loader ----------
 
 
@@ -943,7 +1082,10 @@ def main(argv: Optional[list[str]] = None) -> int:
                    help="Print summary of nodes/edges to stderr")
     p.add_argument("--llm", action="store_true",
                    help="Enable Gemini LLM repair pass for orphan regions "
-                        "(requires GEMINI_API_KEY env var and 'pip install google-generativeai')")
+                        "(requires GEMINI_API_KEY env var)")
+    p.add_argument("--llm-labels", action="store_true",
+                   help="Enable Gemini LLM pass to correct inaccurate/truncated "
+                        "labels on detected nodes and edges (requires GEMINI_API_KEY)")
     args = p.parse_args(argv)
 
     text = sys.stdin.read() if args.input is None else open(args.input, encoding="utf-8").read()
@@ -952,21 +1094,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     nodes = find_rectangles(g, consumed)
     edges = find_edges(g, consumed, nodes)
 
-    if args.llm:
+    if args.llm or args.llm_labels:
         _load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
         api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         if not api_key:
             sys.stderr.write(
-                "Error: --llm requires GEMINI_API_KEY or GOOGLE_API_KEY environment variable\n"
+                "Error: --llm/--llm-labels require GEMINI_API_KEY or GOOGLE_API_KEY\n"
             )
             return 1
-        try:
+        if args.llm:
             nodes, edges = llm_repair(g, consumed, nodes, edges, api_key, verbose=args.report)
-        except ImportError:
-            sys.stderr.write(
-                "Error: --llm requires 'pip install google-generativeai'\n"
-            )
-            return 1
+        if args.llm_labels:
+            nodes, edges = llm_label_review(g, nodes, edges, api_key, verbose=args.report)
 
     if args.report or args.annotate:
         sys.stderr.write(f"nodes: {len(nodes)}, edges: {len(edges)}\n")
