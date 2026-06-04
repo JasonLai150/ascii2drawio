@@ -1,0 +1,56 @@
+┌─────────────────────────────────────────────────────────────────┐
+│                         CLIENT LAYER                           │
+│                                                                 │
+│   ┌──────────────┐     ┌──────────────┐     ┌──────────────┐  │
+│   │  Mobile App  │     │  Web App     │     │ Desktop App  │  │
+│   └──────┬───────┘     └──────┬───────┘     └──────┬───────┘  │
+└──────────┼─────────────────── ┼ ──────────────────┼───────────┘
+           └─────────────────── ┼ ──────────────────┘
+                                │ HTTPS / WebSocket
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                          API GATEWAY                           │
+│              (Auth, Rate Limiting, Routing)                    │
+└──────┬─────────────┬──────────────┬──────────────┬────────────┘
+       │             │              │              │
+       ▼             ▼              ▼              ▼
+┌────────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐
+│   User     │ │ Search   │ │ Playlist │ │  Streaming   │
+│  Service   │ │ Service  │ │ Service  │ │   Service    │
+│            │ │          │ │          │ │              │
+│ - accounts │ │ - track  │ │ - create │ │ - audio      │
+│ - auth     │ │   search │ │ - edit   │ │   delivery   │
+│ - prefs    │ │ - artists│ │ - follow │ │ - bitrate    │
+└─────┬──────┘ └────┬─────┘ └────┬─────┘ └──────┬───────┘
+      │             │            │               │
+      │      ┌──────┘            │               │
+      │      ▼                   ▼               ▼
+      │ ┌──────────┐       ┌──────────┐  ┌──────────────┐
+      │ │ Catalog  │       │   User   │  │     CDN      │
+      │ │ Service  │       │   DB     │  │  (Audio Files│
+      │ │          │       │ (Postgres│  │   by region) │
+      │ │ tracks,  │       │  + Redis │  └──────────────┘
+      │ │ albums,  │       │  cache)  │
+      │ │ artists  │       └──────────┘
+      │ └────┬─────┘
+      │      │
+      ▼      ▼
+┌──────────────────┐     ┌──────────────────┐
+│   Catalog DB     │     │   Message Queue  │
+│   (Postgres)     │     │   (Kafka/SQS)    │
+│                  │     │                  │
+│  tracks, albums, │     │ - play events    │
+│  artists,        │◄────│ - recommendations│
+│  metadata        │     │ - analytics      │
+└──────────────────┘     └────────┬─────────┘
+                                  │
+                                  ▼
+                         ┌──────────────────┐
+                         │ Recommendation   │
+                         │    Service       │
+                         │                  │
+                         │  (ML model,      │
+                         │   listen history,│
+                         │   collaborative  │
+                         │   filtering)     │
+                         └──────────────────┘
