@@ -47,7 +47,7 @@ export interface Health {
 }
 
 export async function health(): Promise<Health> {
-  const res = await fetch("/healthz");
+  const res = await fetch("/api/health");
   if (!res.ok) throw new Error("health check failed");
   return res.json();
 }

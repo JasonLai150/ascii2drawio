@@ -109,8 +109,18 @@ ascii2drawio/
 │   ├── llm.py               # Gemini repair + label-review passes, validators
 │   ├── convert.py           # convert() + ConvertResult  ← shared entry point
 │   └── cli.py               # argparse main(), .env loader
+├── server/                  # FastAPI web backend
+│   ├── app.py               # /api/convert, /api/examples, /api/health (+/healthz alias), static serving, logging
+│   ├── limits.py            # per-IP rate limit + concurrency cap for the AI path
+│   ├── index.html           # barebones page (fallback when web/dist absent)
+│   └── requirements.txt     # fastapi / uvicorn / pydantic
+├── web/                     # React + Vite SPA (editor + draw.io preview)
+│   ├── src/{App,DrawioPreview,api,main}.tsx, index.css
+│   ├── package.json · vite.config.ts · tsconfig.json   # `npm run build` → web/dist
+├── Dockerfile · .dockerignore   # multi-stage build (node → python), single container
+├── DEPLOY.md                # Cloud Run + Secret Manager deploy steps
 ├── pyproject.toml           # package metadata + `ascii2drawio` console script
-├── tests/test_convert.py    # behavior pins (runs with plain python3 or pytest)
+├── tests/                   # test_convert.py (parser) + test_server.py (API/limits)
 ├── CLAUDE.md                # this file
 ├── README.md
 ├── .env                     # GEMINI_API_KEY=... (gitignored)
@@ -162,9 +172,9 @@ Migrating the CLI MVP to a web app. **Decisions locked:**
 **Phases:**
 - ✅ **0** — `convert()` + `ConvertResult` extracted; monolith split into `src/ascii2drawio/`; `tests/test_convert.py` pins behavior.
 - ✅ **1** — `server/app.py`: `POST /api/convert` + `/healthz` + static serving + `.env` load + input cap (`MAX_INPUT_CHARS=20k`) + 503 when AI requested without a key. Barebones `server/index.html` (textarea → convert → download). Deployable.
-- ✅ **2** — React+Vite SPA in `web/`: monospace editor (debounced auto-convert), embedded editable draw.io preview (`DrawioPreview.tsx`, JSON postMessage protocol), `Load example` dropdown (served by `GET /api/examples`), Download `.drawio`. `vite build` → `web/dist/`, which FastAPI serves. *(Live embed render not yet browser-verified — protocol is standard.)*
-- ✅ **3** — "✨ Enhance with AI" button (repair + labels) with loading/error states + stale-response guard; backend gates the AI path: 503 without a key, per-IP rate limit + concurrency cap (`server/limits.py`) → 429, deterministic path stays unmetered. Button auto-disables via `/healthz` `llm` flag. `tests/test_server.py` covers it (stubbed Gemini, no live calls).
-- ⬜ **4** — Dockerfile (node build → python runtime) + Cloud Run + logging.
+- ✅ **2** — React+Vite SPA in `web/`: monospace editor (debounced auto-convert), embedded editable draw.io preview (`DrawioPreview.tsx`, JSON postMessage protocol), `Load example` dropdown (served by `GET /api/examples`, a curated 5-item subset via `APP_EXAMPLES`; the full corpus stays on disk for tests/audit), Download `.drawio`. `vite build` → `web/dist/`, which FastAPI serves. *(Live embed render not yet browser-verified — protocol is standard.)*
+- ✅ **3** — "✨ Enhance with AI" button (repair + labels) with loading/error states + stale-response guard; backend gates the AI path: 503 without a key, per-IP rate limit + concurrency cap (`server/limits.py`) → 429, deterministic path stays unmetered. Button auto-disables via the `/api/health` `llm` flag (health lives under `/api/` because a fronting layer was swallowing bare `/healthz` before it reached the container on Cloud Run). `tests/test_server.py` covers it (stubbed Gemini, no live calls).
+- ✅ **4** — Multi-stage `Dockerfile` (node build → python runtime serving `web/dist` + API), `.dockerignore`, structured JSON request logging (sizes/latency, never diagram text), `DEPLOY.md` with the Cloud Run + Secret Manager commands. Image (~192 MB) built and run-verified locally; deploy is the user's GCP project (not run here).
 
 Run, two ways:
 - **Prod-style (single origin):** `cd web && npm run build` then `.venv/bin/uvicorn server.app:app --port 8000` → `http://127.0.0.1:8000`.

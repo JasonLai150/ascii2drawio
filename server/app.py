@@ -10,7 +10,9 @@ event loop. The Gemini key lives only on the server (env), never in a request.
 """
 from __future__ import annotations
 
+import json
 import os
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -57,6 +59,14 @@ def _client_key(request: Request) -> str:
     return request.client.host if request.client else "anon"
 
 
+def _log(event: str, **fields) -> None:
+    """Single-line JSON to stdout for Cloud Run structured logging.
+
+    Records sizes/metrics/latency only — never the diagram text itself.
+    """
+    print(json.dumps({"severity": "INFO", "event": event, **fields}), flush=True)
+
+
 class Enhance(BaseModel):
     repair: bool = False
     labels: bool = False
@@ -76,6 +86,10 @@ def _api_key() -> str | None:
     return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 
 
+# `/api/health` is what the SPA polls — it lives under /api/ because some
+# fronting layers swallow bare top-level paths like /healthz before they reach
+# the container. /healthz is kept as an alias for external health checks.
+@app.get("/api/health")
 @app.get("/healthz")
 def healthz() -> dict:
     return {"status": "ok", "llm": bool(_api_key())}
@@ -90,7 +104,10 @@ def api_convert(req: ConvertRequest, request: Request) -> ConvertResponse:
     use_llm = req.enhance.repair or req.enhance.labels
     if not use_llm:
         # Fast, free, unmetered path.
+        t0 = time.monotonic()
         result = convert(req.text)
+        _log("convert", mode="deterministic", chars=len(req.text),
+             ms=round((time.monotonic() - t0) * 1000, 1), **result.report)
         return ConvertResponse(xml=result.xml, report=result.report)
 
     # AI-enhance path: needs a key, and is rate- and concurrency-limited.
@@ -100,27 +117,46 @@ def api_convert(req: ConvertRequest, request: Request) -> ConvertResponse:
                             detail="AI enhance is unavailable: server has no API key.")
     _enhance_rate.check(_client_key(request))
     with _enhance_slots:
+        t0 = time.monotonic()
         result = convert(
             req.text,
             repair=req.enhance.repair,
             labels=req.enhance.labels,
             api_key=api_key,
         )
+    _log("convert", mode="enhance", repair=req.enhance.repair,
+         labels=req.enhance.labels, chars=len(req.text),
+         ms=round((time.monotonic() - t0) * 1000, 1), **result.report)
     return ConvertResponse(xml=result.xml, report=result.report)
+
+
+# Curated subset surfaced in the editor's "Load example" dropdown. The full
+# corpus stays on disk (tests + scripts/audit.py use it); only these show in app.
+APP_EXAMPLES = [
+    "simple",
+    "sysdesign/01-url-shortener",
+    "sysdesign/07-distributed-cache",
+    "sysdesign/11-payment-processing",
+    "sysdesign/20-saga-microservices",
+]
 
 
 @app.get("/api/examples")
 def api_examples() -> list[dict]:
     """Bundled sample diagrams for the editor's 'Load example' dropdown."""
-    paths = sorted(EXAMPLES_DIR.glob("*.txt"))
-    paths += sorted((EXAMPLES_DIR / "sysdesign").glob("*.txt"))
     out: list[dict] = []
-    for p in paths:
+    for rel in APP_EXAMPLES:
+        p = EXAMPLES_DIR / f"{rel}.txt"
         try:
             out.append({"name": p.stem, "text": p.read_text(encoding="utf-8")})
         except OSError:
             continue
     return out
+
+
+_log("startup", llm=bool(_api_key()),
+     static="dist" if DIST_DIR.exists() else "fallback",
+     max_input_chars=MAX_INPUT_CHARS)
 
 
 # Static frontend: serve the Vite build if present, else the barebones page.

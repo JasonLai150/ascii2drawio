@@ -1,0 +1,17 @@
+.git
+.gitignore
+.venv
+**/__pycache__
+*.egg-info
+.pytest_cache
+web/node_modules
+web/dist
+out
+out_sysdesign
+tests
+scripts
+.env
+.DS_Store
+**/.DS_Store
+*.md
+nextfixes.txt
