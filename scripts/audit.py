@@ -32,9 +32,8 @@ def audit(path: Path):
     unclassified_line_cells = 0
     for r in range(g.h):
         for c in range(g.w):
-            ch = g.rows[r][c]
             tag = consumed[r][c]
-            if tag is None and (ch in a2d.LINE_CHARS or ch in a2d.ARROWS):
+            if tag is None and a2d.is_edge_glyph(g, r, c):
                 unclassified_line_cells += 1
             elif tag is not None and tag[0] == "orphan-edge":
                 orphan_cells += 1

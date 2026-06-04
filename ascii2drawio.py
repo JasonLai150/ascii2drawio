@@ -43,6 +43,9 @@ ARROW_L = set("←<")
 ARROW_U = set("↑^")
 ARROW_D = set("↓v")
 ARROWS = ARROW_R | ARROW_L | ARROW_U | ARROW_D
+# ASCII arrowheads double as ordinary letters/punctuation; inside label text
+# (e.g. the 'v' in "event") they must be read as text, not as arrows.
+ASCII_ARROWS = set("v^<>")
 LINE_CHARS = H_LINE | V_LINE | set(CORNERS) | set(TEES) | PLUS
 
 DIRS = {"L": (0, -1), "R": (0, 1), "U": (-1, 0), "D": (1, 0)}
@@ -90,6 +93,23 @@ def arrow_dir(ch: str) -> Optional[str]:
     if ch in ARROW_D:
         return "D"
     return None
+
+
+def is_edge_glyph(g: "Grid", r: int, c: int) -> bool:
+    """Whether a cell participates in edge tracing.
+
+    Line glyphs always count. Unicode arrows always count. ASCII arrowheads
+    (v ^ < >) double as letters, so they only count when NOT flanked by
+    alphanumerics — i.e. the 'v' in "event"/"valid" is text, not an arrow.
+    """
+    ch = g.at(r, c)
+    if ch in LINE_CHARS:
+        return True
+    if ch in ARROWS:
+        if ch in ASCII_ARROWS and (g.at(r, c - 1).isalnum() or g.at(r, c + 1).isalnum()):
+            return False
+        return True
+    return False
 
 
 # ---------- grid ----------
@@ -268,8 +288,7 @@ def find_edges(g: Grid, consumed, nodes: list[Node]) -> list[Edge]:
         for c in range(g.w):
             if consumed[r][c] is not None:
                 continue
-            ch = g.at(r, c)
-            if ch not in LINE_CHARS and ch not in ARROWS:
+            if not is_edge_glyph(g, r, c):
                 continue
             cells, label, label_pos = _bfs_edge(g, consumed, r, c)
             if not cells:
@@ -313,8 +332,7 @@ def _offline_label(g: Grid, consumed, edge: Edge) -> str:
     def is_text(r: int, c: int) -> bool:
         if not g.in_bounds(r, c) or consumed[r][c] is not None:
             return False
-        ch = g.at(r, c)
-        return ch != " " and ch not in LINE_CHARS and ch not in ARROWS
+        return g.at(r, c) != " " and not is_edge_glyph(g, r, c)
 
     for r, c in edge.cells:
         conns = connects(g.at(r, c))
@@ -362,7 +380,7 @@ def _bfs_edge(g: Grid, consumed, r0: int, c0: int):
         if consumed[r][c] is not None:
             continue
         ch = g.at(r, c)
-        if ch not in LINE_CHARS and ch not in ARROWS:
+        if not is_edge_glyph(g, r, c):
             continue
         visited.add((r, c))
         cells.append((r, c))
@@ -375,7 +393,7 @@ def _bfs_edge(g: Grid, consumed, r0: int, c0: int):
                 # node border = endpoint; node-interior = stop
                 continue
             nch = g.at(nr, nc)
-            if (nch in LINE_CHARS or nch in ARROWS) and OPP[d] in connects(nch):
+            if is_edge_glyph(g, nr, nc) and OPP[d] in connects(nch):
                 stack.append((nr, nc))
                 continue
             # gap-bridging across labels along same axis
@@ -415,7 +433,9 @@ def _look_ahead_bridge(g: Grid, consumed, r: int, c: int, d: str):
         if consumed[nr][nc] is not None:
             return None
         ch = g.at(nr, nc)
-        if ch in LINE_CHARS or ch in ARROWS:
+        # A letter inside the label (the 'v' in "event") is not a glyph that
+        # should terminate the bridge — only real line/arrow glyphs do.
+        if is_edge_glyph(g, nr, nc):
             if OPP[d] in connects(ch) and any(t.strip() for t in text_chars):
                 # When walking left/up the chars are collected in reverse
                 # reading order; flip them so the label reads correctly.
@@ -431,9 +451,10 @@ def _look_ahead_bridge(g: Grid, consumed, r: int, c: int, d: str):
     return None
 
 
-def _node_at(nodes: list[Node], r: int, c: int) -> Optional[Node]:
+def _node_at(nodes: list[Node], r: int, c: int, tol: int = 0) -> Optional[Node]:
     for n in nodes:
-        if n.top <= r <= n.bottom and n.left <= c <= n.right:
+        if (n.top - tol <= r <= n.bottom + tol
+                and n.left - tol <= c <= n.right + tol):
             return n
     return None
 
@@ -467,7 +488,10 @@ def _build_edges(
         ad = arrow_dir(ch)
         for d in connects(ch):
             dr, dc = DIRS[d]
-            n = _node_at(nodes, r + dr, c + dc)
+            nr, nc = r + dr, c + dc
+            # Exact match first; fall back to ±1 to absorb column drift, where
+            # a box's wall on this row sits one column off its detected bbox.
+            n = _node_at(nodes, nr, nc) or _node_at(nodes, nr, nc, tol=1)
             if n is None:
                 continue
             touch[n.id] = touch.get(n.id, False) or (ad == d)
