@@ -1,0 +1,6 @@
+.env
+.venv/
+__pycache__/
+out/
+out_sysdesign/
+.DS_Store

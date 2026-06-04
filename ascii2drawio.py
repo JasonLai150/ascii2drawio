@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
+import os
 import sys
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 # ---------- glyph classes ----------
 
@@ -475,6 +477,259 @@ def annotate(g: Grid, consumed) -> str:
     return "\n".join(out)
 
 
+# ---------- LLM repair pass ----------
+
+_REPAIR_SYSTEM_PROMPT = """\
+You are a diagram-parser assistant. A deterministic parser processed an ASCII/Unicode \
+box-drawing diagram and tagged some cells as "orphan-edge" — characters that look like \
+box-drawing or line glyphs but could not be connected to any detected node boundary.
+
+Your job: examine the orphan region and identify what the parser missed. Return JSON \
+describing any nodes (closed rectangles) or edges (connections between nodes).
+
+RULES:
+- All coordinates are 0-indexed and refer to the FULL grid (not the subgrid excerpt).
+- For nodes: top < bottom, left < right.
+- For edges: src_node_id and dst_node_id must be a valid node ID from the provided list \
+OR the ID of a new node added earlier in the same repairs array. New nodes are numbered \
+starting from the "next available node ID" shown in the prompt.
+- Only report items you are confident about. If nothing is clearly missed, return \
+{"repairs": []}.
+
+Respond with strict JSON only — no markdown fences, no commentary.
+
+SCHEMA:
+{
+  "repairs": [
+    {"type": "node", "top": int, "left": int, "bottom": int, "right": int, "label": "str"},
+    {"type": "edge", "src_node_id": int, "dst_node_id": int,
+     "has_arrow_dst": bool, "has_arrow_src": bool, "label": "str"}
+  ]
+}
+"""
+
+
+def _orphan_clusters(consumed, g: Grid) -> list[list[tuple[int, int]]]:
+    """8-connected flood fill to group orphan-edge cells into clusters."""
+    orphan_set: set[tuple[int, int]] = {
+        (r, c)
+        for r in range(g.h)
+        for c in range(g.w)
+        if consumed[r][c] is not None and consumed[r][c][0] == "orphan-edge"
+    }
+    visited: set[tuple[int, int]] = set()
+    clusters: list[list[tuple[int, int]]] = []
+    for start in sorted(orphan_set):
+        if start in visited:
+            continue
+        cluster: list[tuple[int, int]] = []
+        stack = [start]
+        while stack:
+            pos = stack.pop()
+            if pos in visited or pos not in orphan_set:
+                continue
+            visited.add(pos)
+            cluster.append(pos)
+            r, c = pos
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    if dr == 0 and dc == 0:
+                        continue
+                    stack.append((r + dr, c + dc))
+        clusters.append(cluster)
+    return clusters
+
+
+def _padded_bbox(cluster: list[tuple[int, int]], pad: int, h: int, w: int) -> tuple[int, int, int, int]:
+    rows = [r for r, _ in cluster]
+    cols = [c for _, c in cluster]
+    return (
+        max(0, min(rows) - pad),
+        max(0, min(cols) - pad),
+        min(h - 1, max(rows) + pad),
+        min(w - 1, max(cols) + pad),
+    )
+
+
+def _subgrid_text(g: Grid, r0: int, c0: int, r1: int, c1: int) -> str:
+    lines = [f"(column offset: {c0} — each row starts at full-grid column {c0})"]
+    for r in range(r0, r1 + 1):
+        row_chars = "".join(g.at(r, c) for c in range(c0, c1 + 1))
+        lines.append(f"[{r:4d}] {row_chars}")
+    return "\n".join(lines)
+
+
+def _build_repair_prompt(g: Grid, nodes: list[Node], cluster: list[tuple[int, int]], next_id: int) -> str:
+    r0, c0, r1, c1 = _padded_bbox(cluster, pad=3, h=g.h, w=g.w)
+    node_lines = [
+        f"  id={n.id} label={n.label!r} bounds=({n.top},{n.left})-({n.bottom},{n.right})"
+        for n in nodes
+    ]
+    nodes_block = "\n".join(node_lines) if node_lines else "  (none)"
+    orphan_coords = ", ".join(f"({r},{c})" for r, c in sorted(cluster))
+    subgrid = _subgrid_text(g, r0, c0, r1, c1)
+    return (
+        f"Detected nodes:\n{nodes_block}\n\n"
+        f"Next available node ID for new nodes in repairs: {next_id}\n\n"
+        f"Orphan-edge cells: {orphan_coords}\n\n"
+        f"Subgrid excerpt (rows {r0}–{r1}):\n{subgrid}"
+    )
+
+
+_GEMINI_MODEL = "gemini-2.5-flash"
+_GEMINI_URL = (
+    f"https://generativelanguage.googleapis.com/v1beta/models/"
+    f"{_GEMINI_MODEL}:generateContent"
+)
+
+
+def _call_gemini(user_prompt: str, api_key: str) -> dict[str, Any]:
+    import urllib.request
+
+    body = json.dumps({
+        "system_instruction": {"parts": [{"text": _REPAIR_SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "thinkingConfig": {"thinkingBudget": 0},
+        },
+    }).encode()
+    req = urllib.request.Request(
+        f"{_GEMINI_URL}?key={api_key}",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read())
+    text = data["candidates"][0]["content"]["parts"][0]["text"]
+    return json.loads(text)
+
+
+def _validate_repair(rep: Any, known_ids: set[int], g: Grid) -> bool:
+    if not isinstance(rep, dict):
+        return False
+    t = rep.get("type")
+    if t == "node":
+        for k in ("top", "left", "bottom", "right"):
+            if not isinstance(rep.get(k), int):
+                return False
+        if rep["top"] >= rep["bottom"] or rep["left"] >= rep["right"]:
+            return False
+        if rep["top"] < 0 or rep["left"] < 0 or rep["bottom"] >= g.h or rep["right"] >= g.w:
+            return False
+        return True
+    if t == "edge":
+        for k in ("src_node_id", "dst_node_id"):
+            if not isinstance(rep.get(k), int):
+                return False
+        if rep["src_node_id"] == rep["dst_node_id"]:
+            return False
+        if rep["src_node_id"] not in known_ids or rep["dst_node_id"] not in known_ids:
+            return False
+        return True
+    return False
+
+
+def llm_repair(
+    g: Grid,
+    consumed,
+    nodes: list[Node],
+    edges: list[Edge],
+    api_key: str,
+    verbose: bool = False,
+) -> tuple[list[Node], list[Edge]]:
+    """Cluster orphan cells → call Gemini per cluster → validate → merge repairs."""
+    clusters = _orphan_clusters(consumed, g)
+    if not clusters:
+        return nodes, edges
+
+    new_nodes = list(nodes)
+    new_edges = list(edges)
+
+    for i, cluster in enumerate(clusters):
+        next_id = len(new_nodes)
+        prompt = _build_repair_prompt(g, new_nodes, cluster, next_id)
+        try:
+            result = _call_gemini(prompt, api_key)
+        except Exception as exc:
+            if verbose:
+                sys.stderr.write(f"[llm] cluster {i}: API error: {exc}\n")
+            continue
+
+        repairs = result.get("repairs", [])
+        if not isinstance(repairs, list):
+            continue
+
+        known_ids = {n.id for n in new_nodes}
+
+        # First pass: nodes (so edges in the same batch can reference them)
+        for rep in repairs:
+            if rep.get("type") != "node":
+                continue
+            if not _validate_repair(rep, known_ids, g):
+                if verbose:
+                    sys.stderr.write(f"[llm] cluster {i}: rejected node repair: {rep}\n")
+                continue
+            node = Node(
+                id=len(new_nodes),
+                top=rep["top"],
+                left=rep["left"],
+                bottom=rep["bottom"],
+                right=rep["right"],
+                label=str(rep.get("label", "")),
+            )
+            new_nodes.append(node)
+            known_ids.add(node.id)
+            if verbose:
+                sys.stderr.write(f"[llm] cluster {i}: added node {node.id} {node.label!r}\n")
+
+        # Second pass: edges
+        for rep in repairs:
+            if rep.get("type") != "edge":
+                continue
+            if not _validate_repair(rep, known_ids, g):
+                if verbose:
+                    sys.stderr.write(f"[llm] cluster {i}: rejected edge repair: {rep}\n")
+                continue
+            edge = Edge(
+                id=len(new_edges),
+                src=rep["src_node_id"],
+                dst=rep["dst_node_id"],
+                label=str(rep.get("label", "")),
+                has_arrow_dst=bool(rep.get("has_arrow_dst", True)),
+                has_arrow_src=bool(rep.get("has_arrow_src", False)),
+            )
+            new_edges.append(edge)
+            if verbose:
+                sys.stderr.write(
+                    f"[llm] cluster {i}: added edge n{edge.src}→n{edge.dst}"
+                    f" label={edge.label!r}\n"
+                )
+
+    return new_nodes, new_edges
+
+
+# ---------- .env loader ----------
+
+
+def _load_dotenv(path: str) -> None:
+    """Load KEY=VALUE pairs from a .env file into os.environ (no-op if missing)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = val
+    except FileNotFoundError:
+        pass
+
+
 # ---------- CLI ----------
 
 
@@ -486,6 +741,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                    help="Print colored grid showing parser classification")
     p.add_argument("--report", action="store_true",
                    help="Print summary of nodes/edges to stderr")
+    p.add_argument("--llm", action="store_true",
+                   help="Enable Gemini LLM repair pass for orphan regions "
+                        "(requires GEMINI_API_KEY env var and 'pip install google-generativeai')")
     args = p.parse_args(argv)
 
     text = sys.stdin.read() if args.input is None else open(args.input, encoding="utf-8").read()
@@ -493,6 +751,22 @@ def main(argv: Optional[list[str]] = None) -> int:
     consumed = [[None] * g.w for _ in range(g.h)]
     nodes = find_rectangles(g, consumed)
     edges = find_edges(g, consumed, nodes)
+
+    if args.llm:
+        _load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            sys.stderr.write(
+                "Error: --llm requires GEMINI_API_KEY or GOOGLE_API_KEY environment variable\n"
+            )
+            return 1
+        try:
+            nodes, edges = llm_repair(g, consumed, nodes, edges, api_key, verbose=args.report)
+        except ImportError:
+            sys.stderr.write(
+                "Error: --llm requires 'pip install google-generativeai'\n"
+            )
+            return 1
 
     if args.report or args.annotate:
         sys.stderr.write(f"nodes: {len(nodes)}, edges: {len(edges)}\n")
