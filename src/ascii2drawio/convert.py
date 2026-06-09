@@ -9,7 +9,7 @@ from .edges import Edge, _orphan_clusters, find_edges
 from .emit import emit_drawio
 from .grid import Grid
 from .llm import llm_label_review, llm_repair
-from .nodes import Node, find_rectangles
+from .nodes import Node, find_rectangles, find_text_nodes
 
 
 @dataclass
@@ -27,6 +27,7 @@ class ConvertResult:
 def convert(
     text: str,
     *,
+    loose: bool = False,
     repair: bool = False,
     labels: bool = False,
     api_key: Optional[str] = None,
@@ -34,13 +35,16 @@ def convert(
 ) -> ConvertResult:
     """Parse an ASCII diagram into draw.io XML.
 
-    Deterministic by default. ``repair`` runs the Gemini orphan-repair pass and
-    ``labels`` runs the Gemini label-correction pass; both are no-ops without an
-    ``api_key``.
+    Deterministic by default. ``loose`` additionally recovers borderless
+    (text-only) nodes that an edge terminates at. ``repair`` runs the Gemini
+    orphan-repair pass and ``labels`` runs the Gemini label-correction pass;
+    both LLM passes are no-ops without an ``api_key``.
     """
     g = Grid.from_text(text)
     consumed = [[None] * g.w for _ in range(g.h)]
     nodes = find_rectangles(g, consumed)
+    if loose:
+        nodes = nodes + find_text_nodes(g, consumed, len(nodes))
     edges = find_edges(g, consumed, nodes)
 
     if repair and api_key:

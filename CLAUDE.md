@@ -35,13 +35,15 @@ Decided early against pure-LLM extraction (slow, costly, non-reproducible) and a
 
 ## What's built today
 
-`src/ascii2drawio/` — an installable Python package split by concern (was a single ~1130-line file; refactored in Phase 0 of the web migration). Pipeline: `Grid → find_rectangles → find_edges → (optional LLM passes) → emit_drawio`. The public entry point is `convert(text, *, repair=False, labels=False, api_key=None) -> ConvertResult`; `import ascii2drawio as a2d` re-exports the full surface (`a2d.Grid`, `a2d.find_edges`, …). Modules: `glyphs` · `grid` · `nodes` · `edges` (incl. `_orphan_clusters`) · `emit` · `annotate` · `llm` · `convert` · `cli`.
+`src/ascii2drawio/` — an installable Python package split by concern (was a single ~1130-line file; refactored in Phase 0 of the web migration). Pipeline: `Grid → find_rectangles → find_edges → (optional LLM passes) → emit_drawio`. The public entry point is `convert(text, *, loose=False, repair=False, labels=False, api_key=None) -> ConvertResult`; `import ascii2drawio as a2d` re-exports the full surface (`a2d.Grid`, `a2d.find_edges`, …). Modules: `glyphs` · `grid` · `nodes` · `edges` (incl. `_orphan_clusters`) · `emit` · `annotate` · `llm` · `convert` · `cli`.
 
 **Glyph classification**
 - `H_LINE`/`V_LINE`/`CORNERS`/`TEES`/`PLUS`/`ARROWS` glyph sets; `H_BORDER`/`V_BORDER` accept tees as border continuation.
-- `ASCII_ARROWS = {v ^ < >}` — these double as letters. `is_edge_glyph()` treats them as text when flanked by alphanumerics (the `v` in "e**v**ent"/"**v**alid"), as arrows otherwise. **This predicate is the single source of truth** for "does this cell participate in edge tracing" and is used everywhere (tracing, bridging, off-line labels, and `scripts/audit.py`).
+- `ASCII_ARROWS = {v ^ < >}` — these double as letters. `is_edge_glyph()` treats them as text when flanked by alphanumerics (the `v` in "e**v**ent"/"**v**alid"), as arrows otherwise. The ASCII hyphen `-` gets the same treatment: between two alphanumerics it's punctuation inside a word (`top-k`, `read-only`), not a line. **This predicate is the single source of truth** for "does this cell participate in edge tracing" and is used everywhere (tracing, bridging, off-line labels, loose-mode node grounding, and `scripts/audit.py`).
 
 **Node detection** — `find_rectangles` / `_try_close_rect`: closed rectangles from `┌`/`+` corners, with ±1 column-drift tolerance on walls/corners and per-row wall tracking for label extraction.
+
+**Borderless nodes (loose mode, `--loose`)** — `find_text_nodes`: promotes text-only nodes (no box outline — `Client`, `Database`, `Load Balancer`) into real nodes. Runs *after* `find_rectangles` (boxes + their labels already consumed) and *before* `find_edges`. Flood-fills unconsumed text into blocks (bridging single-space gaps so multi-word labels stay one node), then **grounds** each block by edge-adjacency: a real node sits at the *end* of a line, so only a line/arrow that `connects` *toward* the block counts. This directional test is the discriminator — a label beside a `│` is rejected (the `│` connects up/down, not sideways toward it), and a pure pass-through inline label (`──text──`, collinear lines on opposite sides, no terminating arrowhead) is left for edge gap-bridging. Marks the block's bbox consumed via `_mark_node`, so `find_edges` then attaches arrows to it geometrically. Emitted as a draw.io text shape (no stroke/fill). **Opt-in** — strict mode (closed-rectangle-only) stays the default, preserving Release-1 accuracy.
 
 **Edge tracing** — `find_edges`:
 - `_bfs_edge` flood-fills a connected line/arrow component and bridges label gaps (`── label ──`) via `_look_ahead_bridge` (which reverses text for left/up walks and reports label cell positions; dedups the gap bridged from both ends).
@@ -51,7 +53,7 @@ Decided early against pure-LLM extraction (slow, costly, non-reproducible) and a
 
 **XML emit** — `emit_drawio`: mxGraph XML at pixel coords scaled by `CHAR_W=9`, `CHAR_H=18`.
 
-**CLI** — `python3 ascii2drawio.py input.txt -o out.drawio`, with `--annotate` (colorized cell classification), `--report` (stderr node/edge summary), `--llm` (orphan repair), `--llm-labels` (label correction).
+**CLI** — `python3 ascii2drawio.py input.txt -o out.drawio`, with `--annotate` (colorized cell classification), `--report` (stderr node/edge summary), `--loose` (also detect borderless text-only nodes), `--llm` (orphan repair), `--llm-labels` (label correction).
 
 ### LLM integration (implemented, Gemini via REST)
 
@@ -91,7 +93,7 @@ Strict-mode parser; `H_BORDER`/`V_BORDER` tee handling; ±1 drift tolerance; per
 ### Remaining limitations
 1. **≥2-column drift boxes go undetected** → their inbound arrow is dropped. The 4 hotspots: `13` Result Store (corners col 83 / walls col 81), `16` Settlement, `18` Kibana UI (3-col drift), `19` Quota Store. Pushing `_try_close_rect` to ±2/±3 risks false positives — these are the canonical **LLM-repair** cases (their orphan regions are exactly what `llm_repair` clusters on; the hardened node validator accepts them because real border glyphs + real label text are present).
 2. **Multi-word floating labels truncate** to the word nearest the line (`hash key`→`key`, `on fail`→`on`). The **label-correction** pass (`--llm-labels`) is designed to fix these.
-3. **Strict mode only** — every node must be a closed rectangle. Loose mode (label-only nodes) sketched as `--loose`, not implemented.
+3. ~~**Strict mode only** — every node must be a closed rectangle.~~ **Done** — loose mode (`--loose`) recovers borderless text-only nodes; see *Borderless nodes* above. Opt-in; strict stays the default.
 
 ## Repo layout
 
@@ -102,7 +104,7 @@ ascii2drawio/
 │   ├── __main__.py          # `python -m ascii2drawio`
 │   ├── glyphs.py            # glyph sets, connects/arrow_dir/is_edge_glyph
 │   ├── grid.py              # Grid
-│   ├── nodes.py             # Node, find_rectangles, _try_close_rect
+│   ├── nodes.py             # Node, find_rectangles, _try_close_rect, find_text_nodes (loose)
 │   ├── edges.py             # Edge, find_edges, _build_edges, _offline_label, _orphan_clusters
 │   ├── emit.py              # emit_drawio (CHAR_W/CHAR_H)
 │   ├── annotate.py          # debug colorization

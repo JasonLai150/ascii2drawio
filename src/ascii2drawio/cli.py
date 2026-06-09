@@ -36,6 +36,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                    help="Print colored grid showing parser classification")
     p.add_argument("--report", action="store_true",
                    help="Print summary of nodes/edges to stderr")
+    p.add_argument("--loose", action="store_true",
+                   help="Also detect borderless (text-only) nodes that an edge "
+                        "terminates at, not just closed rectangles")
     p.add_argument("--llm", action="store_true",
                    help="Enable Gemini LLM repair pass for orphan regions "
                         "(requires GEMINI_API_KEY env var)")
@@ -59,6 +62,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     result = convert(
         text,
+        loose=args.loose,
         repair=args.llm,
         labels=args.llm_labels,
         api_key=api_key,

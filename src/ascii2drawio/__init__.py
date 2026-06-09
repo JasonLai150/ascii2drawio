@@ -16,7 +16,7 @@ from .glyphs import (
     arrow_dir, connects, is_edge_glyph,
 )
 from .grid import Grid
-from .nodes import Node, find_rectangles
+from .nodes import Node, find_rectangles, find_text_nodes
 from .edges import Edge, LABEL_LOOKAHEAD, find_edges
 from .emit import CHAR_H, CHAR_W, emit_drawio
 from .annotate import ANSI, annotate
@@ -27,7 +27,7 @@ from .cli import main
 __all__ = [
     "convert", "ConvertResult", "main",
     "Grid", "Node", "Edge",
-    "find_rectangles", "find_edges", "emit_drawio", "annotate",
+    "find_rectangles", "find_text_nodes", "find_edges", "emit_drawio", "annotate",
     "llm_repair", "llm_label_review",
     "connects", "arrow_dir", "is_edge_glyph",
     "H_LINE", "V_LINE", "CORNERS", "TEES", "PLUS", "LINE_CHARS", "ARROWS",

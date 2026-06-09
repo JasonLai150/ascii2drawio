@@ -88,8 +88,12 @@ def is_edge_glyph(g: "Grid", r: int, c: int) -> bool:
     Line glyphs always count. Unicode arrows always count. ASCII arrowheads
     (v ^ < >) double as letters, so they only count when NOT flanked by
     alphanumerics — i.e. the 'v' in "event"/"valid" is text, not an arrow.
+    The ASCII hyphen '-' is the same: between two alphanumerics it's punctuation
+    inside a word ("top-k", "read-only"), not a horizontal line segment.
     """
     ch = g.at(r, c)
+    if ch == "-" and g.at(r, c - 1).isalnum() and g.at(r, c + 1).isalnum():
+        return False
     if ch in LINE_CHARS:
         return True
     if ch in ARROWS:

@@ -19,9 +19,15 @@ def emit_drawio(nodes: list[Node], edges: list[Edge]) -> str:
         w = n.width * CHAR_W
         h = n.height * CHAR_H
         label = html.escape(n.label) if n.label else f"Node {n.id}"
+        style = (
+            "text;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;"
+            "strokeColor=none;fillColor=none;"
+            if n.borderless
+            else "rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;"
+        )
         cells_xml.append(
             f'        <mxCell id="n{n.id}" value="{label}" '
-            f'style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" '
+            f'style="{style}" '
             f'vertex="1" parent="1">\n'
             f'          <mxGeometry x="{x}" y="{y}" width="{w}" height="{h}" as="geometry" />\n'
             f"        </mxCell>"

@@ -1,3 +1,3 @@
 1) box(es) contained in larger boxes
 2) multiple arrows originating from one box
-3) no box outlines (just text as nodes)
+3) no box outlines (just text as nodes)  -- DONE: loose mode (--loose / convert(loose=True)); find_text_nodes in nodes.py

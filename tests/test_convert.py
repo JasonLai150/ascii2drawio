@@ -40,6 +40,39 @@ def test_url_shortener_fanout_and_clean_labels():
     assert "SPTTH" not in " ".join(labels)            # no reversed-dup regression
 
 
+_LOOSE_DIAGRAM = """\
+Client
+  │
+  ↓
+┌───┐
+│ A │
+└───┘
+  │ note
+  ↓
+┌───┐
+│ B │
+└───┘"""
+
+
+def test_loose_mode_recovers_borderless_nodes():
+    # Strict: only the two closed rectangles.
+    strict = a2d.convert(_LOOSE_DIAGRAM)
+    assert strict.report["nodes"] == 2, strict.report
+
+    # Loose: the text-only "Client" becomes a node and connects into A.
+    loose = a2d.convert(_LOOSE_DIAGRAM, loose=True)
+    assert loose.report["nodes"] == 3, loose.report
+    borderless = {n.label for n in loose.nodes if n.borderless}
+    assert borderless == {"Client"}, borderless
+    assert any(n.label == "Client" and n.borderless for n in loose.nodes)
+    ET.fromstring(loose.xml)  # well-formed
+
+    # "note" sits *beside* a vertical line (the ‖ connects up/down, not toward
+    # it): it must stay an edge label, never get promoted to a node.
+    assert "note" not in borderless
+    assert "note" in {e.label for e in loose.edges}
+
+
 def test_convert_result_shape():
     r = a2d.convert(_read("examples/ascii.txt"))
     assert isinstance(r, a2d.ConvertResult)
@@ -86,6 +119,7 @@ def _run():
         test_simple_counts_and_valid_xml,
         test_labeled_floating_labels,
         test_url_shortener_fanout_and_clean_labels,
+        test_loose_mode_recovers_borderless_nodes,
         test_convert_result_shape,
         test_hallucination_guards_are_pure_and_strict,
     ]
