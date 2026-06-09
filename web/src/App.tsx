@@ -120,8 +120,51 @@ export default function App() {
 
   return (
     <div className="app">
-      <header>
-        <h1>ascii2drawio</h1>
+      <section className="hero">
+        <h1>ascii2diagram</h1>
+        <p className="tagline">ASCII to draw.io converter</p>
+        <p className="lead">
+          Turn the ASCII &amp; Unicode box-drawing diagrams that ChatGPT, Claude
+          and other LLMs love to emit into editable{" "}
+          <strong>draw.io / diagrams.net</strong> files — with your boxes,
+          arrows and labels kept exactly where you drew them.
+        </p>
+        <ol className="steps">
+          <li className="step">
+            <span className="num">1</span>
+            <div>
+              <strong>Paste your diagram</strong>
+              <p>
+                Drop in any text diagram made of <code>┌─┐ │ └─┘</code> boxes and{" "}
+                <code>──&gt; ↓</code> arrows.
+              </p>
+            </div>
+          </li>
+          <li className="step">
+            <span className="num">2</span>
+            <div>
+              <strong>It’s parsed, not re-drawn</strong>
+              <p>
+                A deterministic parser pins every box to its original position so
+                the result looks like your ASCII — not a re-laid-out graph.
+              </p>
+            </div>
+          </li>
+          <li className="step">
+            <span className="num">3</span>
+            <div>
+              <strong>Preview &amp; download</strong>
+              <p>
+                Edit live, optionally <em>✨ Enhance with AI</em> to recover
+                missed boxes &amp; labels, then download a real{" "}
+                <code>.drawio</code> file.
+              </p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <div className="toolbar">
         <span className={"status" + (error ? " err" : "")}>{statusText}</span>
         <span className="grow" />
         <select
@@ -153,33 +196,36 @@ export default function App() {
         <button onClick={download} disabled={!xml}>
           Download .drawio
         </button>
-      </header>
+      </div>
 
-      <main ref={mainRef}>
-        <textarea
-          className="editor"
-          style={{ width: leftWidth }}
-          spellCheck={false}
-          wrap="off"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Paste an ASCII / Unicode box-drawing diagram…"
-        />
-        <div
-          className="gutter"
-          onMouseDown={() => setDragging(true)}
-          title="Drag to resize"
-        />
-        <div className="preview">
-          <DrawioPreview xml={xml} onEdited={(x) => (editedXml.current = x)} />
-        </div>
-        {/* While dragging, this overlay keeps mouse events off the iframe. */}
-        {dragging && <div className="drag-overlay" />}
-      </main>
+      <div className="workspace">
+        <main ref={mainRef}>
+          <textarea
+            className="editor"
+            style={{ width: leftWidth }}
+            spellCheck={false}
+            wrap="off"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Paste an ASCII / Unicode box-drawing diagram…"
+          />
+          <div
+            className="gutter"
+            onMouseDown={() => setDragging(true)}
+            title="Drag to resize"
+          />
+          <div className="preview">
+            <DrawioPreview xml={xml} onEdited={(x) => (editedXml.current = x)} />
+          </div>
+          {/* While dragging, this overlay keeps mouse events off the iframe. */}
+          {dragging && <div className="drag-overlay" />}
+        </main>
+      </div>
 
       <footer>
         Diagrams are sent to the server to convert. “Enhance with AI” also sends
-        the diagram to Google (Gemini).
+        the diagram to Google (Gemini). Open-source on{" "}
+        <a href="https://github.com/JasonLai150/ascii2drawio">GitHub</a>.
       </footer>
     </div>
   );

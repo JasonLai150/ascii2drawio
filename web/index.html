@@ -3,10 +3,63 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ascii2drawio</title>
+
+    <!-- Primary SEO. Title/description are keyword-led with the phrases people
+         actually type, not the tool's codename. -->
+    <title>ascii2diagram — ASCII to draw.io Converter | Text Diagrams to Editable diagrams.net</title>
+    <meta
+      name="description"
+      content="Free online converter that turns ASCII and Unicode box-drawing diagrams into editable draw.io (diagrams.net) files. Paste the text diagrams ChatGPT and other LLMs generate and get a real diagram with the same layout — boxes, arrows and labels preserved."
+    />
+    <meta
+      name="keywords"
+      content="ascii to drawio, ascii to draw.io, ascii diagram converter, text diagram to drawio, ascii art to diagram, convert ascii to diagrams.net, ascii architecture diagram, chatgpt diagram to drawio, unicode box drawing to diagram, ascii to editable diagram, ascii flowchart converter"
+    />
+    <link rel="canonical" href="https://ascii2diagram.xyz/" />
+    <meta name="robots" content="index, follow" />
+
+    <!-- Open Graph / Twitter for link previews (shares feed back into ranking). -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://ascii2diagram.xyz/" />
+    <meta property="og:title" content="ascii2diagram — ASCII to draw.io Converter" />
+    <meta
+      property="og:description"
+      content="Paste an ASCII / Unicode box-drawing diagram and get an editable draw.io file with the same layout. Free, fast, layout-preserving."
+    />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="ascii2diagram — ASCII to draw.io Converter" />
+    <meta
+      name="twitter:description"
+      content="Turn ASCII & Unicode box-drawing diagrams into editable draw.io / diagrams.net files — layout preserved."
+    />
+
+    <!-- Structured data: helps Google understand this is a free web tool. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "ascii2diagram",
+        "alternateName": "ASCII to draw.io Converter",
+        "url": "https://ascii2diagram.xyz/",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Any (web browser)",
+        "description": "Convert ASCII and Unicode box-drawing diagrams into editable draw.io (diagrams.net) files, preserving the original layout, arrows and labels.",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
+    <!-- Crawler/no-JS fallback so there's indexable copy even before React renders. -->
+    <noscript>
+      <h1>ascii2diagram — ASCII to draw.io Converter</h1>
+      <p>
+        Convert ASCII and Unicode box-drawing diagrams into editable draw.io
+        (diagrams.net) files. Paste a text diagram made of box-drawing characters
+        and download a .drawio file with the same layout — boxes, arrows and
+        labels preserved. This tool requires JavaScript to run.
+      </p>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
