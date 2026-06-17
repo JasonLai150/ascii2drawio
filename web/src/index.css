@@ -90,6 +90,16 @@ body { background: #f5f6f8; }
 .grow { flex: 1; }
 .status { font-size: 13px; color: #555; }
 .status.err { color: #c62828; }
+.loose-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #444;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
 
 /* ---- workspace (constrained height, not full viewport) ---- */
 .workspace {

@@ -61,6 +61,17 @@ def test_deterministic_needs_no_key():
     assert resp.report["nodes"] == 1
 
 
+def test_loose_flag_is_deterministic_and_free():
+    # Borderless diagram: strict finds no boxes; loose recovers the text nodes —
+    # all on the free path, no key needed.
+    chain = "Client ──────> Gateway ──────> Service"
+    strict = appmod.api_convert(appmod.ConvertRequest(text=chain), _request())
+    loose = appmod.api_convert(
+        appmod.ConvertRequest(text=chain, loose=True), _request())
+    assert strict.report["nodes"] == 0
+    assert loose.report["nodes"] == 3
+
+
 def test_oversized_413():
     req = appmod.ConvertRequest(text="x" * (appmod.MAX_INPUT_CHARS + 1))
     assert _status(lambda: appmod.api_convert(req, _request())) == 413
@@ -100,6 +111,7 @@ def _run():
         (test_fixed_window_limiter, ()),
         (test_concurrency_limiter, ()),
         (test_deterministic_needs_no_key, ()),
+        (test_loose_flag_is_deterministic_and_free, ()),
         (test_oversized_413, ()),
         (test_enhance_503_without_key, (restore,)),
         (test_enhance_runs_and_rate_limits, (restore, stub_gemini)),

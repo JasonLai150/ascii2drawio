@@ -74,6 +74,8 @@ class Enhance(BaseModel):
 
 class ConvertRequest(BaseModel):
     text: str = Field(..., description="ASCII/Unicode box-drawing diagram")
+    loose: bool = Field(default=False,
+                        description="Also detect borderless (text-only) nodes")
     enhance: Enhance = Field(default_factory=Enhance)
 
 
@@ -103,10 +105,10 @@ def api_convert(req: ConvertRequest, request: Request) -> ConvertResponse:
 
     use_llm = req.enhance.repair or req.enhance.labels
     if not use_llm:
-        # Fast, free, unmetered path.
+        # Fast, free, unmetered path (loose mode is deterministic, so it lives here).
         t0 = time.monotonic()
-        result = convert(req.text)
-        _log("convert", mode="deterministic", chars=len(req.text),
+        result = convert(req.text, loose=req.loose)
+        _log("convert", mode="deterministic", loose=req.loose, chars=len(req.text),
              ms=round((time.monotonic() - t0) * 1000, 1), **result.report)
         return ConvertResponse(xml=result.xml, report=result.report)
 
@@ -120,11 +122,12 @@ def api_convert(req: ConvertRequest, request: Request) -> ConvertResponse:
         t0 = time.monotonic()
         result = convert(
             req.text,
+            loose=req.loose,
             repair=req.enhance.repair,
             labels=req.enhance.labels,
             api_key=api_key,
         )
-    _log("convert", mode="enhance", repair=req.enhance.repair,
+    _log("convert", mode="enhance", loose=req.loose, repair=req.enhance.repair,
          labels=req.enhance.labels, chars=len(req.text),
          ms=round((time.monotonic() - t0) * 1000, 1), **result.report)
     return ConvertResponse(xml=result.xml, report=result.report)

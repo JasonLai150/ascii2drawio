@@ -2,6 +2,7 @@ export interface Report {
   nodes: number;
   edges: number;
   orphan_clusters: number;
+  flags?: number;
 }
 
 export interface Enhance {
@@ -17,11 +18,12 @@ export interface ConvertResponse {
 export async function convert(
   text: string,
   enhance: Enhance = { repair: false, labels: false },
+  loose = false,
 ): Promise<ConvertResponse> {
   const res = await fetch("/api/convert", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, enhance }),
+    body: JSON.stringify({ text, loose, enhance }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

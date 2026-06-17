@@ -30,6 +30,7 @@ export default function App() {
   const [enhancing, setEnhancing] = useState(false);
   const [enhanced, setEnhanced] = useState(false);
   const [llmAvailable, setLlmAvailable] = useState(false);
+  const [loose, setLoose] = useState(false);
   const [examples, setExamples] = useState<Example[]>([]);
   const editedXml = useRef(""); // latest XML, including in-preview edits
   const seq = useRef(0); // drop stale responses (typing races AI, etc.)
@@ -71,7 +72,7 @@ export default function App() {
     else setBusy(true);
     setError("");
     try {
-      const r = await convert(text, enhance);
+      const r = await convert(text, enhance, loose);
       if (id !== seq.current) return; // a newer request superseded this one
       setXml(r.xml);
       setReport(r.report);
@@ -94,7 +95,7 @@ export default function App() {
     const handle = setTimeout(() => run(DETERMINISTIC), 350);
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text]);
+  }, [text, loose]);
 
   function download() {
     const data = editedXml.current || xml;
@@ -167,6 +168,17 @@ export default function App() {
       <div className="toolbar">
         <span className={"status" + (error ? " err" : "")}>{statusText}</span>
         <span className="grow" />
+        <label
+          className="loose-toggle"
+          title="Also detect borderless (text-only) nodes that an arrow points to"
+        >
+          <input
+            type="checkbox"
+            checked={loose}
+            onChange={(e) => setLoose(e.target.checked)}
+          />
+          Text-only nodes
+        </label>
         <select
           value=""
           onChange={(e) => {
