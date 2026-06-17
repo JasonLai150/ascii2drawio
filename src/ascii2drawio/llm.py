@@ -12,6 +12,9 @@ from .glyphs import ARROWS, LINE_CHARS
 from .grid import Grid
 from .nodes import Node
 
+if False:  # typing only, avoid import cycle at runtime
+    from .ir import IR
+
 # ---------- LLM repair pass ----------
 
 _REPAIR_SYSTEM_PROMPT = """\
@@ -378,4 +381,204 @@ def llm_label_review(
                 f"{target.label!r} -> {rep['label']!r}\n"
             )
         target.label = rep["label"]
+    return nodes, edges
+
+
+# ---------- Holistic IR-grounded reconciler ----------
+#
+# One call that sees the WHOLE parse (the deterministic IR) plus the ambiguity
+# flags, and returns a diff in grid coordinates. It supersedes the per-cluster
+# orphan patcher + the separate label pass: a single view lets the model make
+# cross-cutting decisions (a leftover word between two nodes is a node *because*
+# of what flanks it) that a keyhole per-cluster prompt cannot. The IR anchors
+# coordinates so the model reads them off the parser; every op is still gated by
+# the same deterministic validators, so the model can only use real glyphs/text.
+
+_RECONCILE_SYSTEM_PROMPT = """\
+You are a diagram-parser reconciler. A deterministic parser converted an \
+ASCII/Unicode box-drawing diagram into nodes (boxes / text-only nodes) and edges \
+(arrows), and listed the text it could not account for plus "flags" marking \
+regions it is unsure about. Reconcile its output with what the diagram actually \
+shows by returning a diff.
+
+You may:
+- add a node the parser missed (a real box, or a text-only node an arrow points to),
+- add an edge the parser missed between existing or newly-added nodes,
+- relabel a node or edge whose text is wrong/truncated,
+- reparent a node into the box that visually contains it.
+
+RULES:
+- All coordinates are 0-indexed into the FULL grid shown. For nodes: top < bottom, \
+left < right.
+- Every label MUST be text that literally appears in the diagram — copy the exact \
+characters. Never invent, expand, paraphrase, or translate.
+- add_edge src/dst must be an existing node id OR a node added earlier in this same \
+ops array (new nodes are numbered from the "next node id" given).
+- reparent only when the parent box strictly contains the child's bounds.
+- Only include an op you are confident about. If nothing needs changing, return \
+{"ops": []}.
+
+Respond with strict JSON only — no markdown fences, no commentary.
+
+SCHEMA:
+{
+  "ops": [
+    {"op": "add_node", "top": int, "left": int, "bottom": int, "right": int, "label": "str"},
+    {"op": "add_edge", "src": int, "dst": int, "has_arrow_dst": bool, "has_arrow_src": bool, "label": "str"},
+    {"op": "relabel_node", "id": int, "label": "str"},
+    {"op": "relabel_edge", "id": int, "label": "str"},
+    {"op": "reparent_node", "id": int, "parent": int}
+  ]
+}
+"""
+
+
+def _build_reconcile_prompt(g: Grid, ir: "IR") -> str:
+    node_lines = [
+        f"  id={n.id} label={n.label!r} bounds=({n.top},{n.left})-({n.bottom},{n.right})"
+        f"{' borderless' if n.borderless else ''}"
+        f"{f' parent={n.parent}' if n.parent is not None else ''}"
+        for n in ir.nodes
+    ] or ["  (none)"]
+    edge_lines = [
+        f"  id={e.id} n{e.src}->n{e.dst} arrow_dst={e.has_arrow_dst} label={e.label!r}"
+        for e in ir.edges
+    ] or ["  (none)"]
+    text_lines = [
+        f"  {t.text!r} at ({t.top},{t.left})-({t.bottom},{t.right})"
+        for t in ir.text_runs
+    ] or ["  (none)"]
+    flag_lines = [
+        f"  [{f.kind}] ({f.top},{f.left})-({f.bottom},{f.right}): {f.detail}"
+        for f in ir.flags
+    ] or ["  (none)"]
+    return (
+        f"ASCII diagram:\n{_full_grid_text(g)}\n\n"
+        f"Detected nodes:\n" + "\n".join(node_lines) + "\n\n"
+        f"Detected edges:\n" + "\n".join(edge_lines) + "\n\n"
+        f"Unaccounted text runs:\n" + "\n".join(text_lines) + "\n\n"
+        f"Ambiguity flags (regions to reconcile):\n" + "\n".join(flag_lines) + "\n\n"
+        f"Next node id for added nodes: {len(ir.nodes)}\n\n"
+        f"Return a reconciliation diff."
+    )
+
+
+def _node_contains(parent: Node, child: Node) -> bool:
+    return (parent.top < child.top and parent.bottom > child.bottom
+            and parent.left < child.left and parent.right > child.right)
+
+
+def llm_reconcile(
+    g: Grid,
+    ir: "IR",
+    api_key: str,
+    verbose: bool = False,
+) -> tuple[list[Node], list[Edge]]:
+    """One holistic Gemini call over the full IR, returning a validated diff.
+
+    Fires only when the parser raised at least one ambiguity flag. Every op is
+    gated by the same grid-grounding validators used by the granular passes, so
+    the model can only add/relabel using glyphs and text actually present.
+    """
+    if not ir.flags:
+        return ir.nodes, ir.edges
+    prompt = _build_reconcile_prompt(g, ir)
+    try:
+        result = _call_gemini(prompt, api_key, system_prompt=_RECONCILE_SYSTEM_PROMPT)
+    except Exception as exc:
+        if verbose:
+            sys.stderr.write(f"[llm] reconcile: API error: {exc}\n")
+        return ir.nodes, ir.edges
+    ops = result.get("ops", [])
+    if not isinstance(ops, list):
+        return ir.nodes, ir.edges
+    return _apply_ops(g, ir, ops, verbose)
+
+
+def _apply_ops(g: Grid, ir: "IR", ops: list, verbose: bool) -> tuple[list[Node], list[Edge]]:
+    nodes = list(ir.nodes)
+    edges = list(ir.edges)
+    node_by_id = {n.id: n for n in nodes}
+    edge_by_id = {e.id: e for e in edges}
+
+    def log(msg: str) -> None:
+        if verbose:
+            sys.stderr.write(f"[llm] reconcile: {msg}\n")
+
+    # 1. add_node (so later add_edge / reparent can reference new ids)
+    for op in ops:
+        if not isinstance(op, dict) or op.get("op") != "add_node":
+            continue
+        rep = {"type": "node", "top": op.get("top"), "left": op.get("left"),
+               "bottom": op.get("bottom"), "right": op.get("right"),
+               "label": op.get("label", "")}
+        if not _validate_repair(rep, set(node_by_id), g):
+            log(f"rejected add_node: {op}")
+            continue
+        n = Node(id=len(nodes), top=rep["top"], left=rep["left"],
+                 bottom=rep["bottom"], right=rep["right"], label=str(rep["label"]))
+        nodes.append(n)
+        node_by_id[n.id] = n
+        log(f"added node {n.id} {n.label!r}")
+
+    known_ids = set(node_by_id)
+
+    # 2. add_edge
+    for op in ops:
+        if not isinstance(op, dict) or op.get("op") != "add_edge":
+            continue
+        rep = {"type": "edge", "src_node_id": op.get("src"), "dst_node_id": op.get("dst")}
+        if not _validate_repair(rep, known_ids, g):
+            log(f"rejected add_edge: {op}")
+            continue
+        e = Edge(id=len(edges), src=rep["src_node_id"], dst=rep["dst_node_id"],
+                 label=str(op.get("label", "")),
+                 has_arrow_dst=bool(op.get("has_arrow_dst", True)),
+                 has_arrow_src=bool(op.get("has_arrow_src", False)))
+        edges.append(e)
+        log(f"added edge n{e.src}->n{e.dst} label={e.label!r}")
+
+    # 3. relabels (one per item, first wins)
+    relabeled: set[tuple[str, int]] = set()
+    for op in ops:
+        if not isinstance(op, dict):
+            continue
+        kind = op.get("op")
+        if kind not in ("relabel_node", "relabel_edge"):
+            continue
+        target_kind = "node" if kind == "relabel_node" else "edge"
+        oid, label = op.get("id"), op.get("label")
+        registry = node_by_id if target_kind == "node" else edge_by_id
+        if not isinstance(oid, int) or not isinstance(label, str):
+            log(f"rejected {kind}: {op}")
+            continue
+        if oid not in registry or not _label_grounded(g, label):
+            log(f"rejected {kind}: {op}")
+            continue
+        key = (target_kind, oid)
+        if key in relabeled:
+            continue
+        relabeled.add(key)
+        log(f"relabel {target_kind} {oid} {registry[oid].label!r} -> {label!r}")
+        registry[oid].label = label
+
+    # 4. reparent (geometric containment grounded)
+    for op in ops:
+        if not isinstance(op, dict) or op.get("op") != "reparent_node":
+            continue
+        oid, pid = op.get("id"), op.get("parent")
+        if not isinstance(oid, int) or oid not in node_by_id:
+            log(f"rejected reparent_node: {op}")
+            continue
+        if pid is None:
+            node_by_id[oid].parent = None
+            log(f"reparent node {oid} -> root")
+            continue
+        if (not isinstance(pid, int) or pid not in node_by_id or pid == oid
+                or not _node_contains(node_by_id[pid], node_by_id[oid])):
+            log(f"rejected reparent_node: {op}")
+            continue
+        node_by_id[oid].parent = pid
+        log(f"reparent node {oid} -> {pid}")
+
     return nodes, edges

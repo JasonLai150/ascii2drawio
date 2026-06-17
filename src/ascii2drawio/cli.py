@@ -43,11 +43,12 @@ def main(argv: Optional[list[str]] = None) -> int:
                    help="Also detect borderless (text-only) nodes that an edge "
                         "terminates at, not just closed rectangles")
     p.add_argument("--llm", action="store_true",
-                   help="Enable Gemini LLM repair pass for orphan regions "
-                        "(requires GEMINI_API_KEY env var)")
+                   help="Enable the Gemini IR-grounded reconciliation pass "
+                        "(adds missed nodes/edges, relabels, reparents in one "
+                        "validated call; requires GEMINI_API_KEY env var)")
     p.add_argument("--llm-labels", action="store_true",
-                   help="Enable Gemini LLM pass to correct inaccurate/truncated "
-                        "labels on detected nodes and edges (requires GEMINI_API_KEY)")
+                   help="Also enable the Gemini reconciliation pass (same single "
+                        "holistic call as --llm; both flags route through it)")
     args = p.parse_args(argv)
 
     text = sys.stdin.read() if args.input is None else open(args.input, encoding="utf-8").read()

@@ -192,6 +192,66 @@ def test_ir_flags_surface_unconsumed_text():
     json.dumps(r.ir.to_dict())
 
 
+def test_reconciler_validates_and_applies_ops():
+    from ascii2drawio import llm
+    from ascii2drawio.ir import IR
+    diagram = (
+        "┌─────┐   ┌─────┐\n"
+        "│ Foo │   │ Bar │\n"
+        "└─────┘   └─────┘\n"
+        "          ┌─────┐\n"
+        "          │ Baz │\n"
+        "          └─────┘"
+    )
+    g = a2d.Grid.from_text(diagram)
+    res = a2d.convert(diagram)
+    assert len(res.nodes) == 3, res.report
+    foo, bar, baz = res.nodes
+    # Pretend the parser missed Baz; the reconciler proposes a diff.
+    ir = IR(width=g.w, height=g.h, nodes=[foo, bar], edges=[], text_runs=[], flags=[])
+    ops = [
+        # re-add the real (pretend-missed) box -> grid-grounded, applied
+        {"op": "add_node", "top": baz.top, "left": baz.left,
+         "bottom": baz.bottom, "right": baz.right, "label": "Baz"},
+        # invented box over empty space -> rejected (no border glyphs)
+        {"op": "add_node", "top": 3, "left": 0, "bottom": 5, "right": 6, "label": "Ghost"},
+        # ungrounded relabel (text not in diagram) -> rejected
+        {"op": "relabel_node", "id": 1, "label": "Kafka"},
+        # valid edge between existing nodes -> applied
+        {"op": "add_edge", "src": 0, "dst": 1, "has_arrow_dst": True, "label": ""},
+    ]
+    nodes, edges = llm._apply_ops(g, ir, ops, verbose=False)
+    labels = {n.label for n in nodes}
+    assert "Baz" in labels                                      # real box re-added
+    assert "Ghost" not in labels                                # hallucination rejected
+    assert next(n for n in nodes if n.id == 1).label == "Bar"   # ungrounded relabel rejected
+    assert any(e.src == 0 and e.dst == 1 for e in edges)        # edge added
+
+
+def test_reconcile_fires_only_on_flags(monkeypatch_call):
+    from ascii2drawio import llm
+    from ascii2drawio.ir import IR, AmbiguityFlag
+    src = "┌───┐\n│ A │\n└───┘"
+    g = a2d.Grid.from_text(src)
+    res = a2d.convert(src)
+    calls = {"n": 0}
+
+    def stub(*a, **k):
+        calls["n"] += 1
+        return {"ops": []}
+
+    monkeypatch_call(stub)
+    no_flags = IR(width=g.w, height=g.h, nodes=res.nodes, edges=res.edges,
+                  text_runs=[], flags=[])
+    llm.llm_reconcile(g, no_flags, api_key="x")
+    assert calls["n"] == 0  # short-circuits without flags — no API call
+
+    flagged = IR(width=g.w, height=g.h, nodes=res.nodes, edges=res.edges, text_runs=[],
+                 flags=[AmbiguityFlag("orphan_cluster", 0, 0, 0, 0, "x")])
+    llm.llm_reconcile(g, flagged, api_key="x")
+    assert calls["n"] == 1  # a flag triggers exactly one holistic call
+
+
 def test_convert_result_shape():
     r = a2d.convert(_read("examples/ascii.txt"))
     assert isinstance(r, a2d.ConvertResult)
@@ -247,6 +307,7 @@ def _run():
         test_labeled_fanout_branches_keep_their_labels,
         test_drifted_walls_recovered_via_edges,
         test_ir_flags_surface_unconsumed_text,
+        test_reconciler_validates_and_applies_ops,
         test_convert_result_shape,
         test_hallucination_guards_are_pure_and_strict,
     ]
@@ -255,12 +316,13 @@ def _run():
         passed += 1
         print(f"  ok  {fn.__name__}")
 
-    # stub the network boundary for the label-review test
+    # stub the network boundary for the tests that exercise the Gemini calls
     def monkeypatch_call(fake):
         llm._call_gemini = fake
-    test_llm_label_review_applies_and_rejects(monkeypatch_call)
-    passed += 1
-    print(f"  ok  test_llm_label_review_applies_and_rejects")
+    for fn in (test_llm_label_review_applies_and_rejects, test_reconcile_fires_only_on_flags):
+        fn(monkeypatch_call)
+        passed += 1
+        print(f"  ok  {fn.__name__}")
     print(f"\n{passed} passed")
 
 

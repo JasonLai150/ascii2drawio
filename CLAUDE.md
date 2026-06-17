@@ -35,7 +35,7 @@ Decided early against pure-LLM extraction (slow, costly, non-reproducible) and a
 
 ## What's built today
 
-`src/ascii2drawio/` — an installable Python package split by concern (was a single ~1130-line file; refactored in Phase 0 of the web migration). Pipeline: `Grid → find_rectangles → find_edges → (optional LLM passes) → emit_drawio`. The public entry point is `convert(text, *, loose=False, repair=False, labels=False, api_key=None) -> ConvertResult`; `import ascii2drawio as a2d` re-exports the full surface (`a2d.Grid`, `a2d.find_edges`, …). Modules: `glyphs` · `grid` · `nodes` · `edges` (incl. `_orphan_clusters`) · `emit` · `annotate` · `llm` · `convert` · `cli`.
+`src/ascii2drawio/` — an installable Python package split by concern (was a single ~1130-line file; refactored in Phase 0 of the web migration). Pipeline: `Grid → find_rectangles (nested) → [find_text_nodes if loose] → find_edges → build_ir → (optional LLM reconcile) → emit_drawio`. The public entry point is `convert(text, *, loose=False, repair=False, labels=False, api_key=None) -> ConvertResult`; `import ascii2drawio as a2d` re-exports the full surface (`a2d.Grid`, `a2d.find_edges`, …). Modules: `glyphs` · `grid` · `nodes` · `edges` (incl. `_orphan_clusters`) · `emit` · `ir` · `annotate` · `llm` · `convert` · `cli`.
 
 **Glyph classification**
 - `H_LINE`/`V_LINE`/`CORNERS`/`TEES`/`PLUS`/`ARROWS` glyph sets; `H_BORDER`/`V_BORDER` accept tees as border continuation.
@@ -62,12 +62,14 @@ Decided early against pure-LLM extraction (slow, costly, non-reproducible) and a
 ### LLM integration (implemented, Gemini via REST)
 
 - **Auth/transport resolved**: direct **Gemini REST** (`gemini-2.5-flash`, `thinkingBudget: 0`) via `urllib` — no SDK dependency. Key from `GEMINI_API_KEY`/`GOOGLE_API_KEY`, loaded from a repo-root `.env` by `_load_dotenv`. (The earlier Anthropic-SDK/Bedrock/Vertex fork is moot.)
-- **`llm_repair`** — clusters orphan-edge cells (`_orphan_clusters`, 8-connected), builds a localized per-cluster prompt (detected nodes + padded sub-grid), validates each repair (`_validate_repair`), merges. **One call per cluster.**
-- **`llm_label_review`** — **one** call with the full (small) diagram + all node/edge labels; returns label corrections only.
-- **Anti-hallucination guards (deterministic, grid-grounded):**
-  - Node repairs: `_border_evidence` (≥50% of the claimed rectangle border must be real line glyphs) + `_label_evidence` (majority of label tokens must appear in the region). A real-but-missed box passes; an invented box/label is rejected.
-  - Label repairs: `_label_grounded` (label text must literally appear in the grid). Stops the model inventing/paraphrasing.
-- LLM passes are **blocking** (`urllib`); a web backend must run them in a threadpool (sync handler), not on the event loop.
+- **`llm_reconcile` (the default path `convert()` uses when `repair`/`labels` is set)** — **one holistic call** over the deterministic IR (full ASCII + nodes/edges/text-runs/flags) returning a **diff in grid coordinates** (`add_node` · `add_edge` · `relabel_node` · `relabel_edge` · `reparent_node`). Seeing the whole parse at once lets it make cross-cutting calls a keyhole per-cluster prompt can't (a leftover word between two nodes is a node *because* of what flanks it). **Fires only when ≥1 ambiguity flag was raised** (the broadened trigger — catches "confident but wrong", not just orphan cells). Ops applied in order (nodes → edges → relabels → reparents) so later ops can reference newly-added ids; each op gated by the validators below.
+- **Legacy granular passes still exported** (not used by `convert()` anymore): `llm_repair` (per-cluster orphan patch, **one call per cluster**) and `llm_label_review` (one label-only call). Kept for back-compat/tests; the reconciler subsumes both.
+- **Anti-hallucination guards (deterministic, grid-grounded) — reused by the reconciler:**
+  - `add_node`: `_border_evidence` (≥50% of the claimed rectangle border must be real line glyphs) + `_label_evidence` (majority of label tokens must appear in the region). A real-but-missed box passes; an invented box/label is rejected. *(Borderless text nodes have no border, so the reconciler can't add those — they come from loose mode.)*
+  - `add_edge`: src/dst must be real node ids (existing or added earlier in the diff), src ≠ dst.
+  - relabels: `_label_grounded` (label text must literally appear in the grid). Stops the model inventing/paraphrasing.
+  - `reparent_node`: parent must be a real node id that *geometrically contains* the child (`_node_contains`), or null.
+- LLM passes are **blocking** (`urllib`); a web backend must run them in a threadpool (sync handler), not on the event loop. The network boundary is `_call_gemini` — tests stub it (no live calls).
 
 ## Self-test corpus and audit harness
 
@@ -113,7 +115,7 @@ ascii2drawio/
 │   ├── emit.py              # emit_drawio (CHAR_W/CHAR_H)
 │   ├── ir.py                # IR + AmbiguityFlag + build_ir (deterministic flags)
 │   ├── annotate.py          # debug colorization
-│   ├── llm.py               # Gemini repair + label-review passes, validators
+│   ├── llm.py               # Gemini reconciler (default) + legacy repair/label passes, validators
 │   ├── convert.py           # convert() + ConvertResult  ← shared entry point
 │   └── cli.py               # argparse main(), .env loader
 ├── server/                  # FastAPI web backend
