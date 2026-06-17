@@ -252,6 +252,18 @@ def test_reconcile_fires_only_on_flags(monkeypatch_call):
     assert calls["n"] == 1  # a flag triggers exactly one holistic call
 
 
+def test_filled_triangle_arrowheads():
+    # ▼ and ◄ are unambiguous arrowheads (never letters) — they must give a
+    # directed edge and never leak into a label.
+    down = a2d.convert("┌───┐\n│ A │\n└───┘\n  │\n  ▼\n┌───┐\n│ B │\n└───┘")
+    assert down.report["edges"] == 1, down.report
+    e = down.edges[0]
+    assert e.has_arrow_dst and e.label == "", e
+    left = a2d.convert("┌───┐    ┌───┐\n│ A │◄───│ B │\n└───┘    └───┘")
+    le = left.edges[0]
+    assert (le.src, le.dst) == (1, 0) and le.has_arrow_dst, le  # B -> A
+
+
 def test_convert_result_shape():
     r = a2d.convert(_read("examples/ascii.txt"))
     assert isinstance(r, a2d.ConvertResult)
@@ -308,6 +320,7 @@ def _run():
         test_drifted_walls_recovered_via_edges,
         test_ir_flags_surface_unconsumed_text,
         test_reconciler_validates_and_applies_ops,
+        test_filled_triangle_arrowheads,
         test_convert_result_shape,
         test_hallucination_guards_are_pure_and_strict,
     ]

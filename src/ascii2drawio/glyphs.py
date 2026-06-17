@@ -25,10 +25,12 @@ TEES = {
     "┼": ("L", "R", "U", "D"),
 }
 PLUS = {"+"}
-ARROW_R = set("→>")
-ARROW_L = set("←<")
-ARROW_U = set("↑^")
-ARROW_D = set("↓v")
+# Filled-triangle arrowheads (► ◄ ▲ ▼ and their ◀ ▶ variants) are unambiguous —
+# unlike v ^ < > they never double as letters, so they always read as arrows.
+ARROW_R = set("→>►▶")
+ARROW_L = set("←<◄◀")
+ARROW_U = set("↑^▲")
+ARROW_D = set("↓v▼")
 ARROWS = ARROW_R | ARROW_L | ARROW_U | ARROW_D
 # ASCII arrowheads double as ordinary letters/punctuation; inside label text
 # (e.g. the 'v' in "event") they must be read as text, not as arrows.
