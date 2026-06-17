@@ -152,6 +152,22 @@ def test_labeled_fanout_branches_keep_their_labels():
     assert (by_label["C"].id, "write") in pairs, pairs
 
 
+def test_drifted_walls_recovered_via_edges():
+    # Malformed boxes whose middle-row walls are shifted several columns but
+    # whose top+bottom edges align: recovered by the edge-based close, with a
+    # clean label and the inbound arrow attached.
+    cases = [
+        ("examples/sysdesign/16-online-auction.txt", "Settlement"),
+        ("examples/sysdesign/18-log-aggregation.txt", "Kibana UI"),
+        ("examples/sysdesign/19-api-gateway.txt", "Quota Store"),
+    ]
+    for path, label in cases:
+        r = a2d.convert(_read(path))
+        node = next((n for n in r.nodes if n.label == label), None)
+        assert node is not None, f"{label} not detected in {path}"
+        assert any(e.dst == node.id for e in r.edges), f"{label} has no inbound edge"
+
+
 def test_convert_result_shape():
     r = a2d.convert(_read("examples/ascii.txt"))
     assert isinstance(r, a2d.ConvertResult)
@@ -205,6 +221,7 @@ def _run():
         test_nested_two_levels_with_sibling_edge,
         test_multiple_arrows_from_one_box,
         test_labeled_fanout_branches_keep_their_labels,
+        test_drifted_walls_recovered_via_edges,
         test_convert_result_shape,
         test_hallucination_guards_are_pure_and_strict,
     ]

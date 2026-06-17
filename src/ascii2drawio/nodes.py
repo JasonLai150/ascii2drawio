@@ -93,6 +93,18 @@ def _close_rect(g: Grid, r0: int, c0: int):
     if c >= g.w or g.at(r0, c) not in TR_CORNERS or c - c0 < 2:
         return None
     c1 = c
+    std = _close_by_walls(g, r0, c0, c1)
+    if std is not None:
+        return std
+    # The side walls didn't close within ±1 (≥2-col drift). A box whose top
+    # AND bottom horizontal edges are both fully formed and column-aligned is
+    # still strong evidence — accept it via the edges.
+    return _close_by_edges(g, r0, c0, c1)
+
+
+def _close_by_walls(g: Grid, r0: int, c0: int, c1: int):
+    """Standard close: walk the side walls down from the top edge with ±1
+    column-drift tolerance. Returns the geometry tuple or None."""
     # walk right edge with ±1 column tolerance to handle LLM column drift
     r = r0 + 1
     right_col_at_row = {r0: c1}
@@ -137,6 +149,43 @@ def _close_rect(g: Grid, r0: int, c0: int):
         else:
             return None
     return (r0, c0, r1, c1, left_col_at_row, right_col_at_row)
+
+
+# How far a drifted side wall may sit from its corner column (label extraction).
+_DRIFT_WIDE = 3
+
+
+def _close_by_edges(g: Grid, r0: int, c0: int, c1: int):
+    """Fallback close for a box whose side walls drifted beyond ±1 but whose top
+    and bottom edges are both fully formed and column-aligned (the canonical
+    "middle row shifted N columns" malformed box). Requiring two complete,
+    aligned horizontal edges + all four corners is strong evidence, so this only
+    fires on real-but-malformed boxes, not noise. Walls are then located with a
+    wider search purely to bound label extraction."""
+    r1 = None
+    for r in range(r0 + 2, g.h):
+        if (g.at(r, c0) in BL_CORNERS and g.at(r, c1) in BR_CORNERS
+                and all(g.at(r, cc) in H_BORDER for cc in range(c0 + 1, c1))):
+            r1 = r
+            break
+    if r1 is None:
+        return None
+    left_col_at_row = {r0: c0, r1: c0}
+    right_col_at_row = {r0: c1, r1: c1}
+    for rr in range(r0 + 1, r1):
+        left_col_at_row[rr] = _nearest_wall(g, rr, c0)
+        right_col_at_row[rr] = _nearest_wall(g, rr, c1)
+    return (r0, c0, r1, c1, left_col_at_row, right_col_at_row)
+
+
+def _nearest_wall(g: Grid, r: int, c: int) -> int:
+    """Column of the nearest vertical-wall glyph to ``c`` within ±_DRIFT_WIDE,
+    else ``c`` unchanged."""
+    for d in range(_DRIFT_WIDE + 1):
+        for cc in (c - d, c + d):
+            if 0 <= cc < g.w and g.at(r, cc) in V_BORDER:
+                return cc
+    return c
 
 
 def _extract_label(g: Grid, node: "Node", left_col_at_row, right_col_at_row,
