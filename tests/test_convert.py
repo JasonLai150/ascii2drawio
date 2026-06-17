@@ -130,6 +130,28 @@ def test_nested_two_levels_with_sibling_edge():
     ET.fromstring(r.xml)
 
 
+def test_multiple_arrows_from_one_box():
+    # Arrows leaving all four sides of one hub — each a distinct edge sourced
+    # from the hub (the existing source/sink pairing already handles this).
+    r = a2d.convert(_read("examples/multi-arrow/four-sides.txt"))
+    by_label = {n.label: n for n in r.nodes}
+    hub = by_label["Hub"].id
+    assert r.report["edges"] == 4, r.report
+    assert all(e.src == hub and e.has_arrow_dst for e in r.edges)
+    assert {e.dst for e in r.edges} == {
+        by_label[l].id for l in ("Up", "Down", "Left", "Right")
+    }
+
+
+def test_labeled_fanout_branches_keep_their_labels():
+    r = a2d.convert(_read("examples/multi-arrow/labeled-fanout.txt"))
+    by_label = {n.label: n for n in r.nodes}
+    a = by_label["A"].id
+    pairs = {(e.dst, e.label) for e in r.edges if e.src == a}
+    assert (by_label["B"].id, "read") in pairs, pairs
+    assert (by_label["C"].id, "write") in pairs, pairs
+
+
 def test_convert_result_shape():
     r = a2d.convert(_read("examples/ascii.txt"))
     assert isinstance(r, a2d.ConvertResult)
@@ -181,6 +203,8 @@ def _run():
         test_arrowhead_fused_to_text_not_glued,
         test_nested_boxes_containment_and_clean_labels,
         test_nested_two_levels_with_sibling_edge,
+        test_multiple_arrows_from_one_box,
+        test_labeled_fanout_branches_keep_their_labels,
         test_convert_result_shape,
         test_hallucination_guards_are_pure_and_strict,
     ]
