@@ -73,6 +73,18 @@ def test_loose_mode_recovers_borderless_nodes():
     assert "note" in {e.label for e in loose.edges}
 
 
+def test_loose_mode_horizontal_chain_with_gutters():
+    # The natural form puts a space between text and the line ("Client ──> X").
+    # Grounding must hop that single-space gutter, or the chain recovers nothing.
+    diagram = "Client ──────> Gateway ──────> Service"
+    loose = a2d.convert(diagram, loose=True)
+    labels = [n.label for n in loose.nodes]
+    assert labels == ["Client", "Gateway", "Service"], labels
+    assert all(n.borderless for n in loose.nodes)
+    assert loose.report["edges"] == 2, loose.report
+    ET.fromstring(loose.xml)
+
+
 def test_convert_result_shape():
     r = a2d.convert(_read("examples/ascii.txt"))
     assert isinstance(r, a2d.ConvertResult)
@@ -120,6 +132,7 @@ def _run():
         test_labeled_floating_labels,
         test_url_shortener_fanout_and_clean_labels,
         test_loose_mode_recovers_borderless_nodes,
+        test_loose_mode_horizontal_chain_with_gutters,
         test_convert_result_shape,
         test_hallucination_guards_are_pure_and_strict,
     ]

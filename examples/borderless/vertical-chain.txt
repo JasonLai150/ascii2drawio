@@ -1,0 +1,10 @@
+   Browser
+      │
+      ↓
+Load Balancer ───> Web Server
+                       │
+                       ↓
+                    Cache
+                       │
+                       ↓
+                   Database

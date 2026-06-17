@@ -1,0 +1,4 @@
+Client ──────> Gateway ──────> Service
+                  │
+                  ↓
+               Database

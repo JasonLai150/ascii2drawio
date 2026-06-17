@@ -200,17 +200,32 @@ def _flood_text(g: Grid, is_text, r0: int, c0: int, seen) -> list[tuple[int, int
     return block
 
 
-def _edge_into(g: Grid, consumed, ar: int, ac: int, into: str) -> tuple[bool, bool]:
-    """Does (ar,ac) hold an unconsumed edge glyph connecting in direction
-    ``into`` (toward the block)? Returns (grounds, points_arrowhead_in)."""
-    if not g.in_bounds(ar, ac) or consumed[ar][ac] is not None:
-        return (False, False)
-    if not is_edge_glyph(g, ar, ac):
-        return (False, False)
-    ch = g.at(ar, ac)
-    if into not in connects(ch):
-        return (False, False)
-    return (True, arrow_dir(ch) == into)
+# Spaces tolerated between a borderless node's text and its connector line.
+# Diagrams conventionally write "Client ──> Gateway" with a gutter, so the
+# line never sits flush against the text; without this the most natural form
+# grounds nothing. One space is enough — wider risks grabbing a neighbor's line.
+_GROUND_GAP = 1
+
+
+def _edge_into(
+    g: Grid, consumed, ar: int, ac: int, into: str, dr: int, dc: int
+) -> tuple[bool, bool]:
+    """Scan outward from (ar,ac) in step (dr,dc) across up to ``_GROUND_GAP``
+    spaces for an unconsumed edge glyph connecting in direction ``into`` (back
+    toward the block). Returns (grounds, points_arrowhead_in)."""
+    for _ in range(_GROUND_GAP + 1):
+        if not g.in_bounds(ar, ac) or consumed[ar][ac] is not None:
+            return (False, False)
+        ch = g.at(ar, ac)
+        if ch == " ":  # hop the gutter between text and its line
+            ar, ac = ar + dr, ac + dc
+            continue
+        if not is_edge_glyph(g, ar, ac):
+            return (False, False)
+        if into not in connects(ch):
+            return (False, False)
+        return (True, arrow_dir(ch) == into)
+    return (False, False)
 
 
 def _try_text_node(g: Grid, consumed, block, node_id: int) -> Optional[Node]:
@@ -238,11 +253,11 @@ def _try_text_node(g: Grid, consumed, block, node_id: int) -> Optional[Node]:
     arrow_in = False
     checks: list[tuple[str, tuple[bool, bool]]] = []
     for cc in range(left, right + 1):
-        checks.append(("top", _edge_into(g, consumed, top - 1, cc, "D")))
-        checks.append(("bottom", _edge_into(g, consumed, bottom + 1, cc, "U")))
+        checks.append(("top", _edge_into(g, consumed, top - 1, cc, "D", -1, 0)))
+        checks.append(("bottom", _edge_into(g, consumed, bottom + 1, cc, "U", 1, 0)))
     for rr in range(top, bottom + 1):
-        checks.append(("left", _edge_into(g, consumed, rr, left - 1, "R")))
-        checks.append(("right", _edge_into(g, consumed, rr, right + 1, "L")))
+        checks.append(("left", _edge_into(g, consumed, rr, left - 1, "R", 0, -1)))
+        checks.append(("right", _edge_into(g, consumed, rr, right + 1, "L", 0, 1)))
     for side, (grounds, is_arrow) in checks:
         if grounds:
             sides.add(side)

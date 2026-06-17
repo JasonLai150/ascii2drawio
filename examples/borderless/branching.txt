@@ -1,0 +1,4 @@
+Producer ──> Queue ──> Consumer
+   │                      │
+   ↓                      ↓
+ Logs                  Metrics
