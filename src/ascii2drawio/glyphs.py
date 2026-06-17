@@ -98,6 +98,15 @@ def is_edge_glyph(g: "Grid", r: int, c: int) -> bool:
         return True
     if ch in ARROWS:
         if ch in ASCII_ARROWS and (g.at(r, c - 1).isalnum() or g.at(r, c + 1).isalnum()):
+            # Looks like a letter — unless it's a horizontal arrowhead fused to
+            # its line on one side and text on the other ("──>Gateway",
+            # "Gateway<──"). A same-axis line neighbor means it's a real arrow,
+            # so the arrow reading wins. (Scoped to < > — the vertical v ^ are
+            # the delicate letter cases, "event"/"valid", left untouched.)
+            if (ch in ARROW_R or ch in ARROW_L) and (
+                g.at(r, c - 1) in H_LINE or g.at(r, c + 1) in H_LINE
+            ):
+                return True
             return False
         return True
     return False

@@ -85,6 +85,20 @@ def test_loose_mode_horizontal_chain_with_gutters():
     ET.fromstring(loose.xml)
 
 
+def test_arrowhead_fused_to_text_not_glued():
+    # No gutter: "Client──>Gateway". The arrowhead must read as an arrow (not
+    # get absorbed into the node text / edge label) when its line is on one
+    # side and text on the other.
+    loose = a2d.convert("Client──────>Gateway──────>Service", loose=True)
+    assert [n.label for n in loose.nodes] == ["Client", "Gateway", "Service"]
+    assert all(e.label == "" for e in loose.edges)  # no ">Gateway" glue
+    # ...but letters that merely look like arrows stay text:
+    g = a2d.Grid.from_text("event")
+    assert not a2d.is_edge_glyph(g, 0, 2)  # the 'v'
+    g = a2d.Grid.from_text("a>b")
+    assert not a2d.is_edge_glyph(g, 0, 1)  # comparison, no line attached
+
+
 def test_convert_result_shape():
     r = a2d.convert(_read("examples/ascii.txt"))
     assert isinstance(r, a2d.ConvertResult)
@@ -133,6 +147,7 @@ def _run():
         test_url_shortener_fanout_and_clean_labels,
         test_loose_mode_recovers_borderless_nodes,
         test_loose_mode_horizontal_chain_with_gutters,
+        test_arrowhead_fused_to_text_not_glued,
         test_convert_result_shape,
         test_hallucination_guards_are_pure_and_strict,
     ]
