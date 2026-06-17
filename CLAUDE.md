@@ -23,15 +23,25 @@ Take input like:
 
 Mermaid would be cheaper to emit (draw.io supports Mermaid import natively), but the whole point of preserving an ASCII diagram is preserving the LLM's chosen layout. Mermaid recomputes layout. mxGraph XML lets us pin each node at `(col × CHAR_W, row × CHAR_H)` so the imported diagram looks like the ASCII source, not a re-laid-out version.
 
-## Approach: deterministic primary, LLM repair fallback
+## Approach: deterministic perception, LLM reconciliation
 
-Decided early against pure-LLM extraction (slow, costly, non-reproducible) and against actor-critic loops (this is a parsing task with ground truth — a critic mostly re-derives what the actor produced). The hybrid, now fully implemented:
+Decided early against pure-LLM extraction (slow, costly, non-reproducible) and against actor-critic loops (this is a parsing task with ground truth — a critic mostly re-derives what the actor produced).
 
-1. **Deterministic parser** handles the ~95% — clean Unicode/ASCII boxes, traced edges (incl. fan-out/fan-in), arrowheads, inline + floating labels. Fast, free, debuggable.
-2. **Confidence signal** — orphan-edge cells flag localized failures and cluster into "regions needing repair."
-3. **LLM repair pass** (`--llm`) looks at flagged regions only, returns missing nodes/edges as JSON, validates against the grid, merges before XML emit.
-4. **LLM label pass** (`--llm-labels`) proof-reads existing labels and corrects truncations/mistakes, grid-grounded.
-5. **No critic loop.** Deterministic validators on the LLM output catch errors more cheaply than a second LLM pass.
+**Failure taxonomy (sort by root nature, not symptom — the bucket says which tool owns it):**
+- **A. Glyph perception** — `v`/`^` as letters vs arrows, `-` hyphen vs line, `>Gateway` glue, doubled/reversed labels. *Has local ground truth → deterministic predicate (`is_edge_glyph`). LLM is the wrong tool here.*
+- **B. Geometry/tolerance** — ≥2-col-drift boxes, space-gap grounding, nested-box containment, multi-arrow. *Pixels + coordinates → deterministic.*
+- **C. Structural interpretation** — mid-chain node vs pass-through label, which fan-out branch a trunk label attaches to. *No local ground truth → genuinely wants the model.*
+- **D. Label content** — multi-word truncation. *Reading task → model-friendly.*
+
+A and B are most of the residual work and are deterministic; only C (and D) want the LLM. The pipeline:
+
+1. **Deterministic parser** handles the ~95% — clean boxes, **nested containers**, traced edges (fan-out/fan-in, multi-arrow), arrowheads, inline + floating labels, **drifted-wall recovery**, **borderless nodes (loose)**. Fast, free, reproducible.
+2. **Deterministic IR + ambiguity flags** (`build_ir`) — packages the parse and flags where it's least sure: `orphan_cluster`, `ungrounded_text` (likely missed node), `truncation_suspect` (likely label fragment). This **broadens the repair trigger** beyond orphan-edge cells, which only catch edge-tracing failures and miss "confident but wrong" cases (a missed node / truncated label produce well-formed-but-wrong output with no orphan signal).
+3. **One holistic LLM reconciliation pass** (`llm_reconcile`, `--llm`/`--llm-labels`) — fires only when a flag was raised; sees the *whole* IR (ASCII + nodes + edges + leftover text + flags) and returns a **diff in grid coordinates** (add/relabel/reparent). Seeing everything at once is what lets it resolve cross-cutting C-type decisions; the IR anchors coordinates so it reads them off the parser.
+4. **Validators gate every diff op** (border/label evidence, label-grounded, id validity, geometric containment) — the model can only use glyphs/text actually in the grid.
+5. **No critic loop.** The deterministic validators on the LLM output are cheaper and stricter than a second LLM pass.
+
+*(Earlier model: deterministic-first + per-cluster orphan **patching** + a separate label pass. The flaw was the trigger, not the ordering — orphan cells are a smoke detector wired only to the kitchen. The reconciler keeps "deterministic proposes, LLM disposes, validators gate" but proposes a *complete structured scene* and audits it *once* instead of patching self-flagged holes.)*
 
 ## What's built today
 

@@ -5,6 +5,7 @@ For each input file:
   - count nodes / edges
   - count orphan-edge cells (line glyphs that couldn't be resolved to nodes)
   - count completely unconsumed line glyphs
+  - count deterministic IR ambiguity flags (the reconciler's trigger)
   - validate XML output is well-formed
 """
 from __future__ import annotations
