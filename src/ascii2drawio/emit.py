@@ -13,22 +13,40 @@ CHAR_H = 18
 
 def emit_drawio(nodes: list[Node], edges: list[Edge]) -> str:
     cells_xml: list[str] = []
+    by_id = {n.id: n for n in nodes}
+    container_ids = {n.parent for n in nodes if n.parent is not None}
     for n in nodes:
-        x = n.left * CHAR_W
-        y = n.top * CHAR_H
+        # Nested children are positioned relative to their container's origin.
+        if n.parent is not None and n.parent in by_id:
+            p = by_id[n.parent]
+            x = (n.left - p.left) * CHAR_W
+            y = (n.top - p.top) * CHAR_H
+            parent_attr = f"n{n.parent}"
+        else:
+            x = n.left * CHAR_W
+            y = n.top * CHAR_H
+            parent_attr = "1"
         w = n.width * CHAR_W
         h = n.height * CHAR_H
         label = html.escape(n.label) if n.label else f"Node {n.id}"
-        style = (
-            "text;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;"
-            "strokeColor=none;fillColor=none;"
-            if n.borderless
-            else "rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;"
-        )
+        if n.borderless:
+            style = (
+                "text;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;"
+                "strokeColor=none;fillColor=none;"
+            )
+        elif n.id in container_ids:
+            # A box holding other boxes: label sits at the top so it doesn't
+            # overlap the children, and it acts as a draw.io container.
+            style = (
+                "rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#000000;"
+                "verticalAlign=top;container=1;collapsible=0;"
+            )
+        else:
+            style = "rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;"
         cells_xml.append(
             f'        <mxCell id="n{n.id}" value="{label}" '
             f'style="{style}" '
-            f'vertex="1" parent="1">\n'
+            f'vertex="1" parent="{parent_attr}">\n'
             f'          <mxGeometry x="{x}" y="{y}" width="{w}" height="{h}" as="geometry" />\n'
             f"        </mxCell>"
         )

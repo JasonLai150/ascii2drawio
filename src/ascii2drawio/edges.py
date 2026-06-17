@@ -204,11 +204,27 @@ def _look_ahead_bridge(g: Grid, consumed, r: int, c: int, d: str):
 
 
 def _node_at(nodes: list[Node], r: int, c: int, tol: int = 0) -> Optional[Node]:
+    """Smallest box whose *border* passes through (r,c). An edge touches a node
+    at its perimeter, so a line merely crossing a container's interior must not
+    register the container as a touchpoint — only a cell on the box's border (or
+    within ``tol`` of it, for column-drift) counts. With nested boxes a border
+    cell can be shared; prefer the smallest-area match (the innermost box). For
+    non-nested diagrams the line abuts exactly one border, so this is equivalent
+    to the old bbox test."""
+    best = None
+    best_area = None
     for n in nodes:
-        if (n.top - tol <= r <= n.bottom + tol
+        if not (n.top - tol <= r <= n.bottom + tol
                 and n.left - tol <= c <= n.right + tol):
-            return n
-    return None
+            continue
+        on_border = (abs(r - n.top) <= tol or abs(r - n.bottom) <= tol
+                     or abs(c - n.left) <= tol or abs(c - n.right) <= tol)
+        if not on_border:
+            continue
+        area = (n.bottom - n.top) * (n.right - n.left)
+        if best_area is None or area < best_area:
+            best, best_area = n, area
+    return best
 
 
 def _node_center(n: Node) -> tuple[float, float]:

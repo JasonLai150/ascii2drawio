@@ -99,6 +99,37 @@ def test_arrowhead_fused_to_text_not_glued():
     assert not a2d.is_edge_glyph(g, 0, 1)  # comparison, no line attached
 
 
+def test_nested_boxes_containment_and_clean_labels():
+    # One container holding two boxes: parents link, container label is clean.
+    r = a2d.convert(_read("examples/nested/containers.txt"))
+    assert r.report["nodes"] == 3, r.report
+    by_label = {n.label: n for n in r.nodes}
+    assert set(by_label) == {"Cluster", "Web", "API"}, by_label
+    assert by_label["Cluster"].parent is None
+    assert by_label["Web"].parent == by_label["Cluster"].id
+    assert by_label["API"].parent == by_label["Cluster"].id
+    # The container must be emitted as a draw.io container, children parented to it.
+    assert 'container=1' in r.xml
+    assert f'parent="n{by_label["Cluster"].id}"' in r.xml
+    ET.fromstring(r.xml)
+
+
+def test_nested_two_levels_with_sibling_edge():
+    # Region > Cluster > {Web, API}, and an edge between the two innermost boxes
+    # that lives inside the container interior must still be traced.
+    r = a2d.convert(_read("examples/nested/two-levels-edge.txt"))
+    by_label = {n.label: n for n in r.nodes}
+    assert set(by_label) == {"Region", "Cluster", "Web", "API"}, by_label
+    assert by_label["Cluster"].parent == by_label["Region"].id
+    assert by_label["Web"].parent == by_label["Cluster"].id
+    # exactly the Web -> API edge, no phantom container touchpoints
+    assert r.report["edges"] == 1, r.report
+    e = r.edges[0]
+    assert (e.src, e.dst) == (by_label["Web"].id, by_label["API"].id)
+    assert e.has_arrow_dst
+    ET.fromstring(r.xml)
+
+
 def test_convert_result_shape():
     r = a2d.convert(_read("examples/ascii.txt"))
     assert isinstance(r, a2d.ConvertResult)
@@ -148,6 +179,8 @@ def _run():
         test_loose_mode_recovers_borderless_nodes,
         test_loose_mode_horizontal_chain_with_gutters,
         test_arrowhead_fused_to_text_not_glued,
+        test_nested_boxes_containment_and_clean_labels,
+        test_nested_two_levels_with_sibling_edge,
         test_convert_result_shape,
         test_hallucination_guards_are_pure_and_strict,
     ]

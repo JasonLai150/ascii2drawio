@@ -27,6 +27,7 @@ class Node:
     right: int
     label: str
     borderless: bool = False  # loose-mode text node (no box outline)
+    parent: Optional[int] = None  # id of the box that geometrically contains this one
 
     @property
     def width(self) -> int:
@@ -38,23 +39,53 @@ class Node:
 
 
 def find_rectangles(g: Grid, consumed) -> list[Node]:
+    """Detect closed rectangles, including boxes nested inside other boxes.
+
+    Three passes:
+
+    1. **Geometry** — close every rectangle, marking only its *border* consumed
+       so a box can't be re-closed from another corner and shared borders are
+       protected, while interiors stay reachable for nested corners. Outer boxes
+       get lower ids (row-major scan).
+    2. **Containment** — each box's ``parent`` is the smallest other box that
+       strictly contains it (pure geometry, independent of scan order).
+    3. **Interior + labels** — mark interiors ``node-interior`` so edges don't
+       trace through a box, *except* line/arrow glyphs inside a container, which
+       stay unconsumed so an edge between two children can still be traced.
+       Labels exclude nested children's regions and edge glyphs, so a
+       container's label isn't polluted by its contents or the lines between
+       them."""
     nodes: list[Node] = []
+    walls: dict[int, tuple] = {}  # node id -> (left_col_at_row, right_col_at_row, c1)
     for r in range(g.h):
         for c in range(g.w):
             if consumed[r][c] is not None:
-                continue
+                continue  # border of an already-found box — skip
             if g.at(r, c) not in TL_CORNERS:
                 continue
-            node = _try_close_rect(g, r, c)
-            if node is None:
+            geom = _close_rect(g, r, c)
+            if geom is None:
                 continue
-            node.id = len(nodes)
-            _mark_node(consumed, node)
+            r0, c0, r1, c1, lcar, rcar = geom
+            node = Node(id=len(nodes), top=r0, left=c0, bottom=r1, right=c1, label="")
+            _mark_border(consumed, node)
             nodes.append(node)
+            walls[node.id] = (lcar, rcar, c1)
+    # Pass 2: containment by geometry.
+    for node in nodes:
+        node.parent = _smallest_container(node, nodes)
+    # Pass 3: interiors + labels (exclude children + edge glyphs).
+    for node in nodes:
+        children = [n for n in nodes if n.parent == node.id]
+        _mark_interior(g, consumed, node, children)
+        lcar, rcar, c1 = walls[node.id]
+        node.label = _extract_label(g, node, lcar, rcar, c1, children)
     return nodes
 
 
-def _try_close_rect(g: Grid, r0: int, c0: int) -> Optional[Node]:
+def _close_rect(g: Grid, r0: int, c0: int):
+    """Geometry-only rectangle close. Returns
+    ``(r0, c0, r1, c1, left_col_at_row, right_col_at_row)`` or ``None``."""
     # walk top edge: accept tees as continuation of horizontal run
     c = c0 + 1
     while c < g.w and g.at(r0, c) in H_BORDER:
@@ -105,31 +136,84 @@ def _try_close_rect(g: Grid, r0: int, c0: int) -> Optional[Node]:
             left_col_at_row[rr] = c0 - 1
         else:
             return None
-    # interior label (skip cells that drift overlapped into wall)
-    label_lines = []
-    for rr in range(r0 + 1, r1):
+    return (r0, c0, r1, c1, left_col_at_row, right_col_at_row)
+
+
+def _extract_label(g: Grid, node: "Node", left_col_at_row, right_col_at_row,
+                   c1: int, children: list["Node"]) -> str:
+    """Interior text, row by row, skipping wall-drift cells and any cell that
+    falls inside a nested child's bounding box (so a container isn't labeled
+    with the contents of the boxes it holds)."""
+    boxes = [(ch.top, ch.bottom, ch.left, ch.right) for ch in children]
+    label_lines: list[str] = []
+    for rr in range(node.top + 1, node.bottom):
         lc = left_col_at_row[rr] + 1
         rc = right_col_at_row.get(rr, c1)
-        line = "".join(g.at(rr, cc) for cc in range(lc, rc)).strip()
+        chars = []
+        for cc in range(lc, rc):
+            if any(t <= rr <= b and l <= cc <= r for (t, b, l, r) in boxes):
+                continue  # belongs to a nested child
+            if is_edge_glyph(g, rr, cc):
+                continue  # a line/arrow (e.g. an edge between children), not text
+            chars.append(g.at(rr, cc))
+        line = "".join(chars).strip()
         if line:
             label_lines.append(line)
-    return Node(
-        id=-1,
-        top=r0,
-        left=c0,
-        bottom=r1,
-        right=c1,
-        label=" ".join(label_lines),
-    )
+    return " ".join(label_lines)
 
 
-def _mark_node(consumed, node: Node) -> None:
+def _smallest_container(node: Node, nodes: list[Node]) -> Optional[int]:
+    """Id of the smallest box that strictly contains ``node``, or None."""
+    best = None
+    best_area = None
+    for other in nodes:
+        if other.id == node.id:
+            continue
+        if (other.top < node.top and other.bottom > node.bottom
+                and other.left < node.left and other.right > node.right):
+            area = (other.bottom - other.top) * (other.right - other.left)
+            if best_area is None or area < best_area:
+                best, best_area = other.id, area
+    return best
+
+
+def _mark_border(consumed, node: Node) -> None:
     for c in range(node.left, node.right + 1):
         consumed[node.top][c] = ("node", node.id)
         consumed[node.bottom][c] = ("node", node.id)
     for r in range(node.top, node.bottom + 1):
         consumed[r][node.left] = ("node", node.id)
         consumed[r][node.right] = ("node", node.id)
+
+
+def _mark_interior(g: Grid, consumed, node: Node, children: list[Node]) -> None:
+    """Mark the box interior ``node-interior`` so edges don't trace through it.
+    For a *container* (a box with children), skip cells owned by a nested child
+    and leave line/arrow glyphs unconsumed so an edge *between* children stays
+    traceable. A leaf box marks its whole interior solid (label text that merely
+    looks line-ish stays consumed — preserving non-nested accuracy)."""
+    if not children:
+        for r in range(node.top + 1, node.bottom):
+            for c in range(node.left + 1, node.right):
+                if consumed[r][c] is None:
+                    consumed[r][c] = ("node-interior", node.id)
+        return
+    boxes = [(ch.top, ch.bottom, ch.left, ch.right) for ch in children]
+    for r in range(node.top + 1, node.bottom):
+        for c in range(node.left + 1, node.right):
+            if consumed[r][c] is not None:
+                continue  # a child's border, already owned
+            if any(t <= r <= b and l <= c <= rt for (t, b, l, rt) in boxes):
+                continue  # inside a child (its own pass marks it)
+            if is_edge_glyph(g, r, c):
+                continue  # leave the line/arrow for an edge between children
+            consumed[r][c] = ("node-interior", node.id)
+
+
+def _mark_node(consumed, node: Node) -> None:
+    """Mark a whole box (border + solid interior). Used for borderless text
+    nodes, which never contain children."""
+    _mark_border(consumed, node)
     for r in range(node.top + 1, node.bottom):
         for c in range(node.left + 1, node.right):
             consumed[r][c] = ("node-interior", node.id)

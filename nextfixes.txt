@@ -1,3 +1,3 @@
-1) box(es) contained in larger boxes
+1) box(es) contained in larger boxes  -- DONE: nested-box detection (parent links, container emit, sibling edges); find_rectangles 3-pass + border-aware _node_at. Limitation: edge crossing a container wall via ┼ splits at the wall.
 2) multiple arrows originating from one box
 3) no box outlines (just text as nodes)  -- DONE: loose mode (--loose / convert(loose=True)); find_text_nodes in nodes.py
