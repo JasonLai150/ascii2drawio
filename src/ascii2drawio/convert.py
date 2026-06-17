@@ -8,6 +8,7 @@ from typing import Optional
 from .edges import Edge, _orphan_clusters, find_edges
 from .emit import emit_drawio
 from .grid import Grid
+from .ir import IR, build_ir
 from .llm import llm_label_review, llm_repair
 from .nodes import Node, find_rectangles, find_text_nodes
 
@@ -22,6 +23,7 @@ class ConvertResult:
     report: dict
     grid: Grid
     consumed: list
+    ir: IR
 
 
 def convert(
@@ -52,8 +54,14 @@ def convert(
     if labels and api_key:
         nodes, edges = llm_label_review(g, nodes, edges, api_key, verbose=verbose)
 
+    ir = build_ir(g, consumed, nodes, edges)
     clusters = len(_orphan_clusters(consumed, g))
-    report = {"nodes": len(nodes), "edges": len(edges), "orphan_clusters": clusters}
+    report = {
+        "nodes": len(nodes),
+        "edges": len(edges),
+        "orphan_clusters": clusters,
+        "flags": len(ir.flags),
+    }
     return ConvertResult(
         xml=emit_drawio(nodes, edges),
         nodes=nodes,
@@ -62,4 +70,5 @@ def convert(
         report=report,
         grid=g,
         consumed=consumed,
+        ir=ir,
     )

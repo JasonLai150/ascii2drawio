@@ -22,7 +22,7 @@ def _read(rel: str) -> str:
 
 def test_simple_counts_and_valid_xml():
     r = a2d.convert(_read("examples/simple.txt"))
-    assert r.report == {"nodes": 3, "edges": 3, "orphan_clusters": 0}, r.report
+    assert r.report == {"nodes": 3, "edges": 3, "orphan_clusters": 0, "flags": 0}, r.report
     ET.fromstring(r.xml)  # well-formed
 
 
@@ -168,6 +168,30 @@ def test_drifted_walls_recovered_via_edges():
         assert any(e.dst == node.id for e in r.edges), f"{label} has no inbound edge"
 
 
+def test_ir_flags_surface_unconsumed_text():
+    import json
+
+    # A clean diagram: no leftover text, no flags.
+    clean = a2d.convert(_read("examples/simple.txt"))
+    assert clean.ir.flags == [], clean.ir.flags
+    assert clean.report["flags"] == 0
+
+    # Strict mode on a borderless diagram leaves the text unaccounted: each run
+    # becomes a flag — free-floating text -> ungrounded_text (missed node),
+    # edge-hugging text -> truncation_suspect. The IR is the reconciler trigger.
+    r = a2d.convert(_read("examples/borderless/mixed-h-v.txt"))
+    kinds = {f.kind for f in r.ir.flags}
+    assert "ungrounded_text" in kinds, r.ir.flags
+    texts = {t.text for t in r.ir.text_runs}
+    assert {"Client", "Service"} <= texts, texts
+    # every flag is grid-grounded (inside the diagram bounds)
+    for f in r.ir.flags:
+        assert 0 <= f.top <= f.bottom < r.ir.height
+        assert 0 <= f.left <= f.right < r.ir.width
+    # IR serializes to JSON (the reconciler/--ir dump path)
+    json.dumps(r.ir.to_dict())
+
+
 def test_convert_result_shape():
     r = a2d.convert(_read("examples/ascii.txt"))
     assert isinstance(r, a2d.ConvertResult)
@@ -222,6 +246,7 @@ def _run():
         test_multiple_arrows_from_one_box,
         test_labeled_fanout_branches_keep_their_labels,
         test_drifted_walls_recovered_via_edges,
+        test_ir_flags_surface_unconsumed_text,
         test_convert_result_shape,
         test_hallucination_guards_are_pure_and_strict,
     ]

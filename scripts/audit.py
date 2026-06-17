@@ -39,6 +39,10 @@ def audit(path: Path):
                 orphan_cells += 1
 
     edges_missing_endpoint = sum(1 for e in edges if e.src is None or e.dst is None)
+    ir = a2d.build_ir(g, consumed, nodes, edges)
+    flag_kinds: dict[str, int] = {}
+    for f in ir.flags:
+        flag_kinds[f.kind] = flag_kinds.get(f.kind, 0) + 1
     xml_path = OUT / (path.stem + ".drawio")
     xml_ok = False
     try:
@@ -55,17 +59,20 @@ def audit(path: Path):
         "orphan_cells": orphan_cells,
         "unclassified_line_cells": unclassified_line_cells,
         "missing_endpoint": edges_missing_endpoint,
+        "flags": len(ir.flags),
+        "flag_kinds": flag_kinds,
         "xml_ok": xml_ok,
     }
 
 
 def main() -> int:
     rows = [audit(p) for p in INPUTS]
-    headers = ["name", "nodes", "edges", "orphan", "unclass", "no_ep", "xml"]
-    widths = [30, 6, 6, 7, 8, 6, 4]
+    headers = ["name", "nodes", "edges", "orphan", "unclass", "no_ep", "flags", "xml"]
+    widths = [30, 6, 6, 7, 8, 6, 6, 4]
     print("  ".join(h.ljust(w) for h, w in zip(headers, widths)))
     print("  ".join("-" * w for w in widths))
-    totals = {"orphan_cells": 0, "unclassified_line_cells": 0, "missing_endpoint": 0}
+    totals = {"orphan_cells": 0, "unclassified_line_cells": 0, "missing_endpoint": 0, "flags": 0}
+    flag_kinds: dict[str, int] = {}
     bad_xml = 0
     for r in rows:
         print("  ".join([
@@ -75,16 +82,20 @@ def main() -> int:
             str(r["orphan_cells"]).ljust(widths[3]),
             str(r["unclassified_line_cells"]).ljust(widths[4]),
             str(r["missing_endpoint"]).ljust(widths[5]),
-            ("y" if r["xml_ok"] else "N").ljust(widths[6]),
+            str(r["flags"]).ljust(widths[6]),
+            ("y" if r["xml_ok"] else "N").ljust(widths[7]),
         ]))
         for k in totals:
             totals[k] += r[k]
+        for kind, n in r["flag_kinds"].items():
+            flag_kinds[kind] = flag_kinds.get(kind, 0) + n
         if not r["xml_ok"]:
             bad_xml += 1
     print()
     print(f"total orphan-edge cells:        {totals['orphan_cells']}")
     print(f"total unclassified line cells:  {totals['unclassified_line_cells']}")
     print(f"total edges missing endpoint:   {totals['missing_endpoint']}")
+    print(f"total ambiguity flags:          {totals['flags']}  {dict(sorted(flag_kinds.items()))}")
     print(f"files w/ malformed xml:         {bad_xml}/{len(rows)}")
     return 0
 

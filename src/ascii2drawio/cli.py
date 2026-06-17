@@ -36,6 +36,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                    help="Print colored grid showing parser classification")
     p.add_argument("--report", action="store_true",
                    help="Print summary of nodes/edges to stderr")
+    p.add_argument("--ir", action="store_true",
+                   help="Dump the deterministic IR (nodes/edges/text-runs/"
+                        "ambiguity flags) as JSON to stdout and exit")
     p.add_argument("--loose", action="store_true",
                    help="Also detect borderless (text-only) nodes that an edge "
                         "terminates at, not just closed rectangles")
@@ -79,6 +82,11 @@ def main(argv: Optional[list[str]] = None) -> int:
                 f"  e{e.id}: n{e.src} -> n{e.dst} "
                 f"(arrow_dst={e.has_arrow_dst}, label={e.label!r})\n"
             )
+
+    if args.ir:
+        import json
+        sys.stdout.write(json.dumps(result.ir.to_dict(), indent=2) + "\n")
+        return 0
 
     if args.annotate:
         sys.stdout.write(annotate(result.grid, result.consumed) + "\n")

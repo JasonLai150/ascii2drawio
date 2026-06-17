@@ -20,6 +20,7 @@ from .nodes import Node, find_rectangles, find_text_nodes
 from .edges import Edge, LABEL_LOOKAHEAD, find_edges
 from .emit import CHAR_H, CHAR_W, emit_drawio
 from .annotate import ANSI, annotate
+from .ir import IR, AmbiguityFlag, TextRun, build_ir
 from .llm import llm_label_review, llm_repair
 from .convert import ConvertResult, convert
 from .cli import main
@@ -28,6 +29,7 @@ __all__ = [
     "convert", "ConvertResult", "main",
     "Grid", "Node", "Edge",
     "find_rectangles", "find_text_nodes", "find_edges", "emit_drawio", "annotate",
+    "IR", "AmbiguityFlag", "TextRun", "build_ir",
     "llm_repair", "llm_label_review",
     "connects", "arrow_dir", "is_edge_glyph",
     "H_LINE", "V_LINE", "CORNERS", "TEES", "PLUS", "LINE_CHARS", "ARROWS",

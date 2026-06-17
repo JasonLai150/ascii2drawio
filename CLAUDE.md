@@ -55,7 +55,9 @@ Decided early against pure-LLM extraction (slow, costly, non-reproducible) and a
 
 **XML emit** — `emit_drawio`: mxGraph XML at pixel coords scaled by `CHAR_W=9`, `CHAR_H=18`.
 
-**CLI** — `python3 ascii2drawio.py input.txt -o out.drawio`, with `--annotate` (colorized cell classification), `--report` (stderr node/edge summary), `--loose` (also detect borderless text-only nodes), `--llm` (orphan repair), `--llm-labels` (label correction).
+**CLI** — `python3 ascii2drawio.py input.txt -o out.drawio`, with `--annotate` (colorized cell classification), `--report` (stderr node/edge summary), `--ir` (dump the deterministic IR + ambiguity flags as JSON), `--loose` (also detect borderless text-only nodes), `--llm` (orphan repair), `--llm-labels` (label correction).
+
+**Deterministic IR + ambiguity flags** (`ir.py`, `build_ir`) — a grid-grounded structured view exposed on `ConvertResult.ir`: `nodes`, `edges`, unconsumed `text_runs`, and `flags`. Built with **no LLM**; useful standalone (`--ir`, audit harness) and the grounded input the reconciler consumes (so the model reads coordinates off the parser instead of inventing them). **Flags broaden the repair trigger** beyond orphan-edge cells (which only catch edge-tracing failures, missing "confident but wrong" cases): `orphan_cluster` (unresolved edge cells), `ungrounded_text` (free-floating leftover text → likely a missed node), `truncation_suspect` (leftover text 8-adjacent to an edge → likely a truncated/missed label). The `kind` is a *hint* for the reconciler, not a verdict. `report["flags"]` carries the count; `to_dict()` is JSON-serializable.
 
 ### LLM integration (implemented, Gemini via REST)
 
@@ -109,6 +111,7 @@ ascii2drawio/
 │   ├── nodes.py             # Node, find_rectangles (nested), _close_rect, find_text_nodes (loose)
 │   ├── edges.py             # Edge, find_edges, _build_edges, _offline_label, _orphan_clusters
 │   ├── emit.py              # emit_drawio (CHAR_W/CHAR_H)
+│   ├── ir.py                # IR + AmbiguityFlag + build_ir (deterministic flags)
 │   ├── annotate.py          # debug colorization
 │   ├── llm.py               # Gemini repair + label-review passes, validators
 │   ├── convert.py           # convert() + ConvertResult  ← shared entry point
