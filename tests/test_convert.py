@@ -264,6 +264,29 @@ def test_filled_triangle_arrowheads():
     assert (le.src, le.dst) == (1, 0) and le.has_arrow_dst, le  # B -> A
 
 
+def test_ragged_wall_box_closes():
+    # A trapezoidal box whose right wall creeps one column per row (corners at
+    # 12 / 9, walls between) must still close as a single node.
+    ragged = (
+        "┌──────────┐\n"
+        "│ Gateway │\n"
+        "│ Edge   │\n"
+        "└───────┘"
+    )
+    r = a2d.convert(ragged)
+    assert r.report["nodes"] == 1, r.report
+    assert "Gateway" in r.nodes[0].label
+    ET.fromstring(r.xml)
+
+
+def test_spotify_container_box_detected():
+    # The skewed API GATEWAY container (corners 66/64, walls 65) is recovered by
+    # the drift-following wall walk — a node, not a phantom edge label.
+    r = a2d.convert(_read("examples/spotify.txt"))
+    labels = [n.label for n in r.nodes]
+    assert any(l.startswith("API GATEWAY") for l in labels), labels
+
+
 def test_convert_result_shape():
     r = a2d.convert(_read("examples/ascii.txt"))
     assert isinstance(r, a2d.ConvertResult)
@@ -321,6 +344,8 @@ def _run():
         test_ir_flags_surface_unconsumed_text,
         test_reconciler_validates_and_applies_ops,
         test_filled_triangle_arrowheads,
+        test_ragged_wall_box_closes,
+        test_spotify_container_box_detected,
         test_convert_result_shape,
         test_hallucination_guards_are_pure_and_strict,
     ]

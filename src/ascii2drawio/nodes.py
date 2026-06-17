@@ -102,53 +102,67 @@ def _close_rect(g: Grid, r0: int, c0: int):
     return _close_by_edges(g, r0, c0, c1)
 
 
+def _follow_wall(g: Grid, r: int, col: int, charset) -> Optional[int]:
+    """Nearest column to ``col`` (preferring exact, then ±1) whose glyph is in
+    ``charset`` on row ``r`` — used to track a wall that drifts a column at a
+    time."""
+    for cand in (col, col - 1, col + 1):
+        if 0 <= cand < g.w and g.at(r, cand) in charset:
+            return cand
+    return None
+
+
 def _close_by_walls(g: Grid, r0: int, c0: int, c1: int):
-    """Standard close: walk the side walls down from the top edge with ±1
-    column-drift tolerance. Returns the geometry tuple or None."""
-    # walk right edge with ±1 column tolerance to handle LLM column drift
-    r = r0 + 1
+    """Walk the side walls down from the top edge, **following gradual drift**:
+    each row's wall may sit ±1 column from the *previous* row's (cumulative),
+    not ±1 from the original corner. This closes trapezoidal/ragged boxes whose
+    width creeps line-by-line (common in hand/LLM-authored ASCII, e.g. a box
+    with corners at col 66/64 and walls at 65). The closing corners must still
+    be found and the bottom edge between them must be a full horizontal run, so
+    it won't follow a stray line into a false close. Returns the geometry tuple
+    (bounding box over every border glyph) or None."""
+    # Right wall: follow drift down to the bottom-right corner.
     right_col_at_row = {r0: c1}
+    cur = c1
+    r = r0 + 1
     while r < g.h:
-        if g.at(r, c1) in V_BORDER:
-            right_col_at_row[r] = c1
-            r += 1
-        elif g.at(r, c1 - 1) in V_BORDER:
-            right_col_at_row[r] = c1 - 1
-            r += 1
-        elif c1 + 1 < g.w and g.at(r, c1 + 1) in V_BORDER:
-            right_col_at_row[r] = c1 + 1
-            r += 1
-        else:
+        nxt = _follow_wall(g, r, cur, V_BORDER)
+        if nxt is None:
             break
-    if r >= g.h or g.at(r, c1) not in BR_CORNERS or r - r0 < 2:
-        # try BR at c1±1 too, but only if walls drifted there consistently
-        if r < g.h and r - r0 >= 2:
-            for dc in (-1, 1):
-                if 0 <= c1 + dc < g.w and g.at(r, c1 + dc) in BR_CORNERS:
-                    c1 = c1 + dc
-                    break
-            else:
-                return None
-        else:
-            return None
+        right_col_at_row[r] = nxt
+        cur = nxt
+        r += 1
+    if r >= g.h or r - r0 < 2:
+        return None
+    br = _follow_wall(g, r, cur, BR_CORNERS)
+    if br is None:
+        return None
     r1 = r
-    # verify bottom + left
-    for cc in range(c0 + 1, c1):
+    right_col_at_row[r1] = br
+
+    # Left wall: same drift-following walk.
+    left_col_at_row = {r0: c0}
+    cur = c0
+    for rr in range(r0 + 1, r1):
+        nl = _follow_wall(g, rr, cur, V_BORDER)
+        if nl is None:
+            return None
+        left_col_at_row[rr] = nl
+        cur = nl
+    bl = _follow_wall(g, r1, cur, BL_CORNERS)
+    if bl is None:
+        return None
+    left_col_at_row[r1] = bl
+
+    # Verify the bottom edge runs solidly between the two bottom corners.
+    for cc in range(bl + 1, br):
         if g.at(r1, cc) not in H_BORDER:
             return None
-    if g.at(r1, c0) not in BL_CORNERS:
-        return None
-    left_col_at_row = {r0: c0, r1: c0}
-    for rr in range(r0 + 1, r1):
-        if g.at(rr, c0) in V_BORDER:
-            left_col_at_row[rr] = c0
-        elif g.at(rr, c0 + 1) in V_BORDER:
-            left_col_at_row[rr] = c0 + 1
-        elif c0 - 1 >= 0 and g.at(rr, c0 - 1) in V_BORDER:
-            left_col_at_row[rr] = c0 - 1
-        else:
-            return None
-    return (r0, c0, r1, c1, left_col_at_row, right_col_at_row)
+
+    # Bounding box encloses every border glyph found (handles the skew).
+    left = min(left_col_at_row.values())
+    right = max(right_col_at_row.values())
+    return (r0, left, r1, right, left_col_at_row, right_col_at_row)
 
 
 # How far a drifted side wall may sit from its corner column (label extraction).
