@@ -6,9 +6,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .glyphs import DIRS, OPP, arrow_dir, connects, is_edge_glyph
+from .glyphs import DIRS, OPP, PLUS, TEES, arrow_dir, connects, is_edge_glyph
 from .grid import Grid
 from .nodes import Node
+
+# Crossing glyphs: where a line passes *through* a junction rather than ending.
+# On a container's border (├ ┤ ┬ ┴ ┼ +) they mark an edge crossing the wall.
+_CROSSING = set(TEES) | PLUS
 
 
 @dataclass
@@ -142,7 +146,12 @@ def _bfs_edge(g: Grid, consumed, r0: int, c0: int):
             if not g.in_bounds(nr, nc):
                 continue
             if consumed[nr][nc] is not None:
-                # node border = endpoint; node-interior = stop
+                # node border = endpoint; node-interior = stop — UNLESS the line
+                # crosses a container wall via a crossing glyph (┼ ┬ …) and
+                # continues on the far side: bridge through to keep one edge.
+                far = _cross_wall(g, consumed, r, c, d)
+                if far is not None:
+                    stack.append(far)
                 continue
             nch = g.at(nr, nc)
             if is_edge_glyph(g, nr, nc) and OPP[d] in connects(nch):
@@ -168,6 +177,40 @@ def _bfs_edge(g: Grid, consumed, r0: int, c0: int):
     else:
         label_pos = None
     return cells, label, label_pos
+
+
+def _cross_wall(g: Grid, consumed, r: int, c: int, d: str):
+    """If the line at (r,c) going ``d`` meets a *crossing glyph on a node border*
+    and continues on the far side, return the far cell to bridge to (so the edge
+    spans the wall as one component). Else None."""
+    dr, dc = DIRS[d]
+    wr, wc = r + dr, c + dc                       # the border crossing cell
+    tag = consumed[wr][wc] if g.in_bounds(wr, wc) else None
+    if tag is None or tag[0] != "node":
+        return None
+    if g.at(wr, wc) not in _CROSSING or d not in connects(g.at(wr, wc)):
+        return None
+    fr, fc = wr + dr, wc + dc                     # the far side, past the wall
+    if not g.in_bounds(fr, fc) or consumed[fr][fc] is not None:
+        return None
+    if is_edge_glyph(g, fr, fc) and OPP[d] in connects(g.at(fr, fc)):
+        return (fr, fc)
+    return None
+
+
+def _passes_through(g: Grid, r: int, c: int, d: str) -> bool:
+    """True if the line at (r,c) going ``d`` crosses a node border via a crossing
+    glyph and continues beyond it — so the node is passed through, not an
+    endpoint, and must not be collected as a touchpoint."""
+    dr, dc = DIRS[d]
+    wr, wc = r + dr, c + dc
+    if not g.in_bounds(wr, wc) or g.at(wr, wc) not in _CROSSING:
+        return False
+    if d not in connects(g.at(wr, wc)):
+        return False
+    fr, fc = wr + dr, wc + dc
+    return (g.in_bounds(fr, fc) and is_edge_glyph(g, fr, fc)
+            and OPP[d] in connects(g.at(fr, fc)))
 
 
 def _look_ahead_bridge(g: Grid, consumed, r: int, c: int, d: str):
@@ -250,6 +293,7 @@ def _build_edges(
     sink (an arrowhead points into the node) or a source (a plain line leaves
     it), then pair them up rather than collapsing to a single edge.
     """
+    cellset = set(cells)
     touch: dict[int, bool] = {}  # node_id -> arrow points into it
     for r, c in cells:
         ch = g.at(r, c)
@@ -257,10 +301,18 @@ def _build_edges(
         for d in connects(ch):
             dr, dc = DIRS[d]
             nr, nc = r + dr, c + dc
-            # Exact match first; fall back to ±1 to absorb column drift, where
-            # a box's wall on this row sits one column off its detected bbox.
-            n = _node_at(nodes, nr, nc) or _node_at(nodes, nr, nc, tol=1)
+            # Exact match first; fall back to ±1 to absorb column drift, where a
+            # box's wall sits one column off its bbox. The fallback must NOT fire
+            # when the neighbor is our own line continuing past a wall — else a
+            # line merely running 1 col beside a wall gets attributed to it.
+            n = _node_at(nodes, nr, nc)
+            if n is None and (nr, nc) not in cellset:
+                n = _node_at(nodes, nr, nc, tol=1)
             if n is None:
+                continue
+            # A line crossing this node's wall (┼ on a container border) and
+            # continuing beyond passes *through* — it's not a touchpoint.
+            if _passes_through(g, r, c, d):
                 continue
             touch[n.id] = touch.get(n.id, False) or (ad == d)
     if len(touch) < 2:

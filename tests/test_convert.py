@@ -287,6 +287,17 @@ def test_spotify_container_box_detected():
     assert any(l.startswith("API GATEWAY") for l in labels), labels
 
 
+def test_edge_crosses_container_wall_as_one_edge():
+    # Web (inside Group) -> Ext (outside), the line crossing Group's wall at a ┼.
+    # It must be a single Web->Ext edge, not split into Web->Group + Group->Ext.
+    r = a2d.convert(_read("examples/nested/cross-wall-edge.txt"))
+    by_label = {n.label: n for n in r.nodes}
+    assert r.report["edges"] == 1, r.report
+    e = r.edges[0]
+    assert (e.src, e.dst) == (by_label["Web"].id, by_label["Ext"].id), e
+    assert e.has_arrow_dst
+
+
 def test_convert_result_shape():
     r = a2d.convert(_read("examples/ascii.txt"))
     assert isinstance(r, a2d.ConvertResult)
@@ -346,6 +357,7 @@ def _run():
         test_filled_triangle_arrowheads,
         test_ragged_wall_box_closes,
         test_spotify_container_box_detected,
+        test_edge_crosses_container_wall_as_one_edge,
         test_convert_result_shape,
         test_hallucination_guards_are_pure_and_strict,
     ]
