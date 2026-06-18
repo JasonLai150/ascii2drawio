@@ -298,6 +298,31 @@ def test_edge_crosses_container_wall_as_one_edge():
     assert e.has_arrow_dst
 
 
+def test_leaky_border_box_closes():
+    # A box whose bottom border has a couple of spaces punched through it (a
+    # crossing connector) still closes as one node.
+    leaky = (
+        "┌────────────────────────┐\n"
+        "│  Cluster               │\n"
+        "│                        │\n"
+        "└──────────  ────────────┘"
+    )
+    r = a2d.convert(leaky)
+    assert r.report["nodes"] == 1, r.report
+    assert r.nodes[0].label == "Cluster"
+
+
+def test_fanout_connector_not_closed_as_box():
+    # The fan-out connector lines (┌──┼──┐ / └──┼──┘ with arrows between) must
+    # NOT be closed as a phantom box — the side-wall-evidence guard rejects it.
+    r = a2d.convert(_read("examples/sysdesign/07-distributed-cache.txt"))
+    assert r.report["nodes"] == 10, r.report  # exactly the 10 real boxes
+    labels = {n.label for n in r.nodes}
+    assert "Cluster Map" in labels
+    # no giant phantom box spanning the fan-out region
+    assert all(n.height < 10 for n in r.nodes), [n.label for n in r.nodes if n.height >= 10]
+
+
 def test_convert_result_shape():
     r = a2d.convert(_read("examples/ascii.txt"))
     assert isinstance(r, a2d.ConvertResult)
@@ -358,6 +383,8 @@ def _run():
         test_ragged_wall_box_closes,
         test_spotify_container_box_detected,
         test_edge_crosses_container_wall_as_one_edge,
+        test_leaky_border_box_closes,
+        test_fanout_connector_not_closed_as_box,
         test_convert_result_shape,
         test_hallucination_guards_are_pure_and_strict,
     ]

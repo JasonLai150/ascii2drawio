@@ -165,31 +165,76 @@ def _close_by_walls(g: Grid, r0: int, c0: int, c1: int):
     return (r0, left, r1, right, left_col_at_row, right_col_at_row)
 
 
-# How far a drifted side wall may sit from its corner column (label extraction).
+# How far a drifted side wall / corner may sit from its nominal column.
 _DRIFT_WIDE = 3
+# A leaky border row may be this fraction spaces and still count as an edge.
+_BORDER_MIN_FRAC = 0.85
 
 
 def _close_by_edges(g: Grid, r0: int, c0: int, c1: int):
-    """Fallback close for a box whose side walls drifted beyond ±1 but whose top
-    and bottom edges are both fully formed and column-aligned (the canonical
-    "middle row shifted N columns" malformed box). Requiring two complete,
-    aligned horizontal edges + all four corners is strong evidence, so this only
-    fires on real-but-malformed boxes, not noise. Walls are then located with a
-    wider search purely to bound label extraction."""
-    r1 = None
+    """Fallback close for a malformed box the wall-walk can't follow: side walls
+    that *jump* multiple columns (e.g. Kibana's 3-col shift) and/or a **leaky
+    border** (a few spaces punched through it by crossing connectors, e.g.
+    spotify's CLIENT LAYER bottom ``└──┼── ┼ ──┼──┘``). It anchors on the top
+    edge (already validated) and looks for a bottom edge whose corners sit within
+    ``_DRIFT_WIDE`` of the top's and whose run is *mostly* border (`spaces ok`).
+    Guarded by side-wall evidence so two stray dashed lines can't close. Walls
+    are then located with a wider search to bound label extraction."""
+    r1 = bl = br = None
     for r in range(r0 + 2, g.h):
-        if (g.at(r, c0) in BL_CORNERS and g.at(r, c1) in BR_CORNERS
-                and all(g.at(r, cc) in H_BORDER for cc in range(c0 + 1, c1))):
-            r1 = r
+        cand_bl = _near_corner(g, r, c0, BL_CORNERS)
+        cand_br = _near_corner(g, r, c1, BR_CORNERS)
+        if (cand_bl is not None and cand_br is not None
+                and _mostly_border(g, r, cand_bl, cand_br)
+                and _has_side_walls(g, r0, r, c0, c1)):
+            r1, bl, br = r, cand_bl, cand_br
             break
     if r1 is None:
         return None
-    left_col_at_row = {r0: c0, r1: c0}
-    right_col_at_row = {r0: c1, r1: c1}
+    left_col_at_row = {r0: c0, r1: bl}
+    right_col_at_row = {r0: c1, r1: br}
     for rr in range(r0 + 1, r1):
         left_col_at_row[rr] = _nearest_wall(g, rr, c0)
         right_col_at_row[rr] = _nearest_wall(g, rr, c1)
-    return (r0, c0, r1, c1, left_col_at_row, right_col_at_row)
+    left = min(left_col_at_row.values())
+    right = max(right_col_at_row.values())
+    return (r0, left, r1, right, left_col_at_row, right_col_at_row)
+
+
+def _near_corner(g: Grid, r: int, col: int, corners) -> Optional[int]:
+    """Column of a corner glyph within ±_DRIFT_WIDE of ``col`` (nearest first)."""
+    for d in range(_DRIFT_WIDE + 1):
+        for cand in (col - d, col + d):
+            if 0 <= cand < g.w and g.at(r, cand) in corners:
+                return cand
+    return None
+
+
+def _mostly_border(g: Grid, row: int, c_lo: int, c_hi: int) -> bool:
+    """True if the run between two corners is ≥ _BORDER_MIN_FRAC horizontal-border
+    glyphs with the rest spaces (a leaky but real edge) — and no other glyphs."""
+    total = border = 0
+    for c in range(c_lo + 1, c_hi):
+        ch = g.at(row, c)
+        if ch == " ":
+            total += 1
+        elif ch in H_BORDER:
+            total += 1
+            border += 1
+        else:
+            return False  # a stray non-border glyph: not an edge
+    return total > 0 and border / total >= _BORDER_MIN_FRAC
+
+
+def _has_side_walls(g: Grid, r0: int, r1: int, left: int, right: int) -> bool:
+    """At least half the interior rows must show a vertical wall within
+    _DRIFT_WIDE of a side — so two unrelated dashed lines can't 'close'."""
+    def near(rr: int, col: int) -> bool:
+        return any(0 <= col + dc < g.w and g.at(rr, col + dc) in V_BORDER
+                   for dc in range(-_DRIFT_WIDE, _DRIFT_WIDE + 1))
+    interior = range(r0 + 1, r1)
+    hits = sum(1 for rr in interior if near(rr, left) or near(rr, right))
+    return hits * 2 >= (r1 - r0 - 1)
 
 
 def _nearest_wall(g: Grid, r: int, c: int) -> int:
