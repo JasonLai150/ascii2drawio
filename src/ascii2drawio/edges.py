@@ -27,6 +27,9 @@ class Edge:
 
 
 LABEL_LOOKAHEAD = 40
+# Max pure-whitespace gap to bridge in a line (a line briefly broken by spaces,
+# e.g. "─── ┼ ───"). Tight so parallel lines aren't accidentally joined.
+_WS_GAP = 1
 
 
 def find_edges(g: Grid, consumed, nodes: list[Node]) -> list[Edge]:
@@ -231,11 +234,18 @@ def _look_ahead_bridge(g: Grid, consumed, r: int, c: int, d: str):
         # A letter inside the label (the 'v' in "event") is not a glyph that
         # should terminate the bridge — only real line/arrow glyphs do.
         if is_edge_glyph(g, nr, nc):
-            if OPP[d] in connects(ch) and any(t.strip() for t in text_chars):
-                # When walking left/up the chars are collected in reverse
-                # reading order; flip them so the label reads correctly.
-                ordered = text_chars if d in ("R", "D") else list(reversed(text_chars))
-                return ("".join(ordered).strip(), (nr, nc), text_cells)
+            if OPP[d] in connects(ch):
+                if any(t.strip() for t in text_chars):
+                    # A label gap: collected on a L/U walk in reverse reading
+                    # order, so flip them so the label reads correctly.
+                    ordered = text_chars if d in ("R", "D") else list(reversed(text_chars))
+                    return ("".join(ordered).strip(), (nr, nc), text_cells)
+                # A pure, short whitespace gap (≤ _WS_GAP) along the same axis is
+                # the *same* line briefly broken (e.g. "─── ┼ ───" merge buses);
+                # bridge it with no label. Kept tight so unrelated parallel lines
+                # aren't wired together.
+                if len(text_chars) <= _WS_GAP:
+                    return ("", (nr, nc), [])
             return None
         text_chars.append(ch)
         if ch != " ":

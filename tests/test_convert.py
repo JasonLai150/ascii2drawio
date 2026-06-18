@@ -323,6 +323,20 @@ def test_fanout_connector_not_closed_as_box():
     assert all(n.height < 10 for n in r.nodes), [n.label for n in r.nodes if n.height >= 10]
 
 
+def test_whitespace_gap_in_line_is_bridged():
+    # A line briefly broken by a single space (a merge bus / sloppy author) is
+    # still one edge.
+    d = (
+        "┌───┐          ┌───┐\n"
+        "│ A │──── ────>│ B │\n"
+        "└───┘          └───┘"
+    )
+    r = a2d.convert(d)
+    assert r.report["edges"] == 1, r.report
+    e = r.edges[0]
+    assert (e.src, e.dst) == (0, 1) and e.has_arrow_dst
+
+
 def test_convert_result_shape():
     r = a2d.convert(_read("examples/ascii.txt"))
     assert isinstance(r, a2d.ConvertResult)
@@ -385,6 +399,7 @@ def _run():
         test_edge_crosses_container_wall_as_one_edge,
         test_leaky_border_box_closes,
         test_fanout_connector_not_closed_as_box,
+        test_whitespace_gap_in_line_is_bridged,
         test_convert_result_shape,
         test_hallucination_guards_are_pure_and_strict,
     ]
