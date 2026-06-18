@@ -93,10 +93,15 @@ def build_ir(g: Grid, consumed, nodes: list[Node], edges: list[Edge]) -> IR:
     for cluster in _orphan_clusters(consumed, g):
         rs = [r for r, _ in cluster]
         cs = [c for _, c in cluster]
-        flags.append(AmbiguityFlag(
-            "orphan_cluster", min(rs), min(cs), max(rs), max(cs),
-            f"{len(cluster)} edge cell(s) did not resolve to two nodes",
-        ))
+        top, left, bottom, right = min(rs), min(cs), max(rs), max(cs)
+        detail = f"{len(cluster)} edge cell(s) did not resolve to two nodes"
+        near = _nearby_nodes(nodes, top, left, bottom, right)
+        if near:
+            # Give the reconciler grounded ids to wire (fan-in/merge) instead of
+            # guessing — these are the nodes flanking the unresolved region.
+            detail += "; nearby nodes: " + ", ".join(
+                f"n{n.id} {n.label!r}" for n in near)
+        flags.append(AmbiguityFlag("orphan_cluster", top, left, bottom, right, detail))
 
     for tr, cells in runs:
         if _hugs_edge(g, consumed, cells):
@@ -113,6 +118,17 @@ def build_ir(g: Grid, consumed, nodes: list[Node], edges: list[Edge]) -> IR:
 
     return IR(width=g.w, height=g.h, nodes=nodes, edges=edges,
               text_runs=text_runs, flags=flags)
+
+
+def _nearby_nodes(nodes: list[Node], top: int, left: int, bottom: int,
+                  right: int, pad: int = 3) -> list[Node]:
+    """Nodes whose bbox lies within ``pad`` cells of the region — the candidates
+    an unresolved (merge/fan) region most likely connects."""
+    return [
+        n for n in nodes
+        if (n.top - pad <= bottom and n.bottom + pad >= top
+            and n.left - pad <= right and n.right + pad >= left)
+    ]
 
 
 def _unconsumed_text_runs(g: Grid, consumed):

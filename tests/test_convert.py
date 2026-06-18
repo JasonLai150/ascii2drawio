@@ -337,6 +337,15 @@ def test_whitespace_gap_in_line_is_bridged():
     assert (e.src, e.dst) == (0, 1) and e.has_arrow_dst
 
 
+def test_orphan_cluster_flags_carry_neighbor_ids():
+    # A dangling line below A produces an orphan cluster; the flag must name the
+    # nearby node id so the reconciler has grounded ids to wire.
+    r = a2d.convert("┌───┐\n│ A │\n└─┬─┘\n  │\n  │")
+    oc = [f for f in r.ir.flags if f.kind == "orphan_cluster"]
+    assert oc, r.ir.flags
+    assert "nearby nodes" in oc[0].detail and "n0" in oc[0].detail, oc[0].detail
+
+
 def test_convert_result_shape():
     r = a2d.convert(_read("examples/ascii.txt"))
     assert isinstance(r, a2d.ConvertResult)
@@ -400,6 +409,7 @@ def _run():
         test_leaky_border_box_closes,
         test_fanout_connector_not_closed_as_box,
         test_whitespace_gap_in_line_is_bridged,
+        test_orphan_cluster_flags_carry_neighbor_ids,
         test_convert_result_shape,
         test_hallucination_guards_are_pure_and_strict,
     ]
